@@ -59,7 +59,14 @@ class EndeeTypedDict(CommonTypedDict):
         str, 
         click.option("--index-name", type=str, required=True, help="Endee index name (will use a random name if not provided)", show_default=True)
     ]
-
+    prefilter_cardinality_threshold: Annotated[
+        int, 
+        click.option("--prefilter-cardinality-threshold", type=int, default=None, help="Switch to brute-force prefiltering when filter matches ≤N vectors. Range: 1,000–1,000,000 (default: 10,000).", show_default=True)
+    ]
+    filter_boost_percentage: Annotated[
+        int, 
+        click.option("--filter-boost-percentage", type=int, default=None, help="Expand HNSW candidate pool by N%% when a filter is active to compensate for filtered-out results. Range: 0–100 (default: 0).", show_default=True)
+    ]
 
 
 @click.command()

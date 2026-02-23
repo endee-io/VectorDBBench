@@ -17,3 +17,7 @@ vectordataset/
 vectordataset_label_filter/
 test_query.csv
 test_ids.txt
+debug_logs/
+ground_truth_ids.csv
+matched_metadata.txt
+vectordataset_label/

@@ -16,6 +16,9 @@ class EndeeConfig(DBConfig):
     ef_search: Optional[int] = 128
     # collection_name: str
     index_name: str
+    prefilter_cardinality_threshold: Optional[int] = 10000
+    filter_boost_percentage: Optional[int] = 0
+
     
     def to_dict(self) -> dict:
         return {
@@ -31,4 +34,6 @@ class EndeeConfig(DBConfig):
             "ef_search": self.ef_search,
             # "collection_name": self.collection_name,
             "index_name": self.index_name,
+            "prefilter_cardinality_threshold": self.prefilter_cardinality_threshold,
+            "filter_boost_percentage": self.filter_boost_percentage,
         }

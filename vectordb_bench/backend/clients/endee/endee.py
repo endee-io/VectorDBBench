@@ -225,6 +225,7 @@
 #             log.warning(f"Error describing Endee index: {e}")
 #             return {}
 
+import time
 import logging
 from contextlib import contextmanager
 from collections.abc import Iterable
@@ -274,6 +275,8 @@ class Endee(VectorDB):
         self.M = db_config.get("m")
         self.ef_con = db_config.get("ef_con")
         self.ef_search = db_config.get("ef_search")
+        self.prefilter_cardinality_threshold = db_config.get("prefilter_cardinality_threshold")
+        self.filter_boost_percentage = db_config.get("filter_boost_percentage")
         self.with_scalar_labels = with_scalar_labels
         
         # Initialize filter expression (similar to Milvus)
@@ -407,6 +410,91 @@ class Endee(VectorDB):
             raise ValueError(f"Not support Filter for Endee - {filters}")
 
 
+    # def insert_embeddings(
+    #     self,
+    #     embeddings: Iterable[list[float]],
+    #     metadata: list[int],
+    #     labels_data: list[str] | None = None,
+    #     **kwargs,
+    # ) -> tuple[int, Exception]:
+    #     """
+    #     Insert embeddings with filter metadata.
+    #     Modified to include filter fields like Milvus does.
+    #     """
+    #     assert len(embeddings) == len(metadata)
+    #     insert_count = 0
+    #     try:
+    #         batch_vectors = []
+    #         for i in range(len(embeddings)):
+    #             vector_data = {
+    #                 "id": str(metadata[i]),
+    #                 "vector": embeddings[i],
+    #                 "meta": {"id": metadata[i]},  # Store id in meta for reference
+    #                 "filter": {
+    #                     self._scalar_id_field: metadata[i]  # Store id for numeric filtering
+    #                 }
+    #             }
+                
+    #             # Add label field if using scalar labels
+    #             if self.with_scalar_labels and labels_data is not None:
+    #                 vector_data["filter"][self._scalar_label_field] = labels_data[i]
+                
+    #             batch_vectors.append(vector_data)
+                
+    #         self.index.upsert(batch_vectors)
+    #         insert_count = len(batch_vectors)
+            
+    #     except Exception as e:
+    #         log.error(f"Failed to insert data: {e}")
+    #         return insert_count, e
+            
+    #     return (len(embeddings), None)
+
+
+    # def insert_embeddings(
+    #     self,
+    #     embeddings: Iterable[list[float]],
+    #     metadata: list[int],
+    #     labels_data: list[str] | None = None,
+    #     **kwargs,
+    # ) -> tuple[int, Exception]:
+    #     """
+    #     Insert embeddings with filter metadata.
+    #     Modified to include filter fields like Milvus does.
+    #     """
+    #     assert len(embeddings) == len(metadata)
+    #     insert_count = 0
+    #     try:
+    #         batch_vectors = []
+    #         for i in range(len(embeddings)):
+    #             if labels_data is None or labels_data[i] != "label_1p":
+    #                 continue
+    #             vector_data = {
+    #                 "id": str(metadata[i]),
+    #                 "vector": embeddings[i],
+    #                 "meta": {"id": metadata[i]},  # Store id in meta for reference
+    #                 "filter": {
+    #                     self._scalar_id_field: metadata[i]  # Store id for numeric filtering
+    #                 }
+    #             }
+                
+    #             # Add label field if using scalar labels
+    #             if self.with_scalar_labels and labels_data is not None:
+    #                 vector_data["filter"][self._scalar_label_field] = labels_data[i]
+                
+    #             batch_vectors.append(vector_data)
+            
+    #         if batch_vectors != []:
+    #             self.index.upsert(batch_vectors)
+    #             insert_count = len(batch_vectors)
+            
+    #     except Exception as e:
+    #         log.error(f"Failed to insert data: {e}")
+    #         return insert_count, e
+            
+    #     return (len(embeddings), None)
+
+
     def insert_embeddings(
         self,
         embeddings: Iterable[list[float]],
@@ -414,32 +502,36 @@ class Endee(VectorDB):
         labels_data: list[str] | None = None,
         **kwargs,
     ) -> tuple[int, Exception]:
-        """
-        Insert embeddings with filter metadata.
-        Modified to include filter fields like Milvus does.
-        """
         assert len(embeddings) == len(metadata)
         insert_count = 0
         try:
             batch_vectors = []
             for i in range(len(embeddings)):
+                if metadata[i] > 9999 or metadata[i] < 0:
+                    continue
                 vector_data = {
                     "id": str(metadata[i]),
                     "vector": embeddings[i],
-                    "meta": {"id": metadata[i]},  # Store id in meta for reference
+                    "meta": {"id": metadata[i]},
                     "filter": {
-                        self._scalar_id_field: metadata[i]  # Store id for numeric filtering
+                        self._scalar_id_field: metadata[i]
                     }
                 }
                 
-                # Add label field if using scalar labels
                 if self.with_scalar_labels and labels_data is not None:
                     vector_data["filter"][self._scalar_label_field] = labels_data[i]
                 
                 batch_vectors.append(vector_data)
-            
-            self.index.upsert(batch_vectors)
-            insert_count = len(batch_vectors)
+
+            # # Log matched metadata IDs to file
+            # with open("matched_metadata.txt", "a") as f:
+            #     for v in batch_vectors:
+            #         f.write(v["id"] + "\n")
+
+            if batch_vectors != []:
+                self.index.upsert(batch_vectors)
+                insert_count = len(batch_vectors)
+            # time.sleep(20)
             
         except Exception as e:
             log.error(f"Failed to insert data: {e}")
@@ -466,7 +558,9 @@ class Endee(VectorDB):
                 top_k=k,
                 filter=self.filter_expr,  # Use prepared filter expression
                 ef=self.ef_search,
-                include_vectors=False
+                include_vectors=False,
+                prefilter_cardinality_threshold=self.prefilter_cardinality_threshold,
+                filter_boost_percentage=self.filter_boost_percentage
             )
             # print("Results:",results)
             
