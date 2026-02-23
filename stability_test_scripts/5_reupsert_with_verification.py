@@ -25,6 +25,17 @@ def upsert_worker(index, batch):
     except Exception as e:
         return False, str(e)
 
+def verify_worker(index, vec_id):
+    """Attempts to fetch the vector by ID to confirm it was successfully upserted."""
+    try:
+        res = index.get_vector(str(vec_id))
+        if res:
+            return True
+        else:
+            return False
+    except Exception:
+        return False
+
 def run_upsert():
     print(f"🔹 Connecting to Endee at {CONFIG['BASE_URL']}...")
     try:
@@ -50,12 +61,15 @@ def run_upsert():
     
     # --- 1. Format exactly like the DB benchmark ---
     records = []
+    ids_to_verify = [] # Keep a flat list of IDs for the verification step
+    
     for _, row in df.iterrows():
         vec_id = str(row['id'])
+        ids_to_verify.append(vec_id)
         records.append({
             "id": vec_id,
             "vector": row[vector_col].tolist(), 
-            "meta": {"id": vec_id}  # Perfectly matches your DB benchmark format
+            "meta": {"id": vec_id}  
         })
 
     # --- 2. Chunk into batches ---
@@ -80,17 +94,40 @@ def run_upsert():
                 pbar.update(1)
 
     duration = time.time() - start_time
-    print(f"\n✅ Upsert Complete in {duration:.2f}s")
-    print(f"   Successfully Upserted Vectors: {success_count}")
+    print(f"\n✅ Upsert API Calls Complete in {duration:.2f}s")
+    print(f"   API Reported Upserted Vectors: {success_count}")
     if fail_count > 0:
-        print(f"   Failed Batches: {fail_count}")
+        print(f"   API Failed Batches: {fail_count}")
 
-    # --- CLEANUP CODE (REMOVE THIS IF THAT DELETED VECTORS ARE REQUIRED) ---
-    if fail_count == 0 and os.path.exists(CONFIG["TEMP_SAVE_FILE"]):
+    # --- 4. Verification Step ---
+    print(f"\n🔍 Verifying actual insertions using get_vector...")
+    present_count = 0
+    missing_count = 0
+
+    start_verify = time.time()
+    with ThreadPoolExecutor(max_workers=CONFIG["CONCURRENCY"]) as executor:
+        futures = {executor.submit(verify_worker, index, vec_id): vec_id for vec_id in ids_to_verify}
+        
+        with tqdm(total=len(ids_to_verify), unit="chk") as pbar:
+            for future in as_completed(futures):
+                is_present = future.result()
+                if is_present:
+                    present_count += 1
+                else:
+                    missing_count += 1
+                pbar.update(1)
+
+    verify_duration = time.time() - start_verify
+    print(f"\n✅ Verification Complete in {verify_duration:.2f}s")
+    print(f"   Successfully Upserted (Confirmed): {present_count}")
+    print(f"   Missing (Failed to Index):         {missing_count}")
+
+    # --- CLEANUP CODE ---
+    if missing_count == 0 and os.path.exists(CONFIG["TEMP_SAVE_FILE"]):
         os.remove(CONFIG["TEMP_SAVE_FILE"])
         print(f"🗑️  Cleanup: Successfully deleted temporary file '{CONFIG['TEMP_SAVE_FILE']}'")
-    elif fail_count > 0:
-        print(f"⚠️  Cleanup Skipped: Temp file kept because there were failed batches.")
+    elif missing_count > 0:
+        print(f"⚠️  Cleanup Skipped: Temp file kept because {missing_count} vectors are missing.")
 
 if __name__ == "__main__":
     run_upsert()

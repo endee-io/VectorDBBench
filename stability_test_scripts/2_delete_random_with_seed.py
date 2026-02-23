@@ -13,7 +13,7 @@ CONFIG = {
     # Provide EITHER a single file OR the directory containing partitioned files
     "PARQUET_PATH":   "/home/debian/ssd/vectordataset/cohere/cohere_medium_1m/shuffle_train.parquet", 
     "TEMP_SAVE_FILE": "./deleted_vectors_temp.parquet", 
-    "INDEX_NAME":     "1m_hybrid_float32_2",
+    "INDEX_NAME":     "1M_int16d_m16_efcon128_1",
     "TOKEN":          None,  
     "BASE_URL":       "http://57.129.55.56:8050/api/v1",
     "CONCURRENCY":    10,            
