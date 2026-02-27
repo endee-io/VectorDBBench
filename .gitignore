@@ -21,3 +21,4 @@ debug_logs/
 ground_truth_ids.csv
 matched_metadata.txt
 vectordataset_label/
+venv2/

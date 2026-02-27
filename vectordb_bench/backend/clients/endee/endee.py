@@ -390,15 +390,34 @@ class Endee(VectorDB):
     #     else:
     #         msg = f"Not support Filter for Endee - {filters}"
     #         raise ValueError(msg)
+    #---------------------------------------------------------------------------
+    # def prepare_filter(self, filters: Filter):
+    #     if filters.type == FilterOp.NonFilter:
+    #         self.filter_expr = None
+
+    #     elif filters.type == FilterOp.NumGE:
+    #         # Endee supports $range, NOT $gte
+    #         # Dataset size = 1 million → finite upper bound
+    #         self.filter_expr = [
+    #             {self._scalar_id_field: {"$range": [filters.int_value, 1_000_000]}}
+    #         ]
+
+    #     elif filters.type == FilterOp.StrEqual:
+    #         self.filter_expr = [
+    #             {self._scalar_label_field: {"$eq": filters.label_value}}
+    #         ]
+
+    #     else:
+    #         raise ValueError(f"Not support Filter for Endee - {filters}")
+    #-----------------------------------------------------------------------
     def prepare_filter(self, filters: Filter):
         if filters.type == FilterOp.NonFilter:
             self.filter_expr = None
 
         elif filters.type == FilterOp.NumGE:
-            # Endee supports $range, NOT $gte
             # Dataset size = 1 million → finite upper bound
             self.filter_expr = [
-                {self._scalar_id_field: {"$range": [filters.int_value, 1_000_000]}}
+                {self._scalar_id_field: {"$gte": filters.int_value}}
             ]
 
         elif filters.type == FilterOp.StrEqual:
@@ -410,45 +429,45 @@ class Endee(VectorDB):
             raise ValueError(f"Not support Filter for Endee - {filters}")
 
 
-    # def insert_embeddings(
-    #     self,
-    #     embeddings: Iterable[list[float]],
-    #     metadata: list[int],
-    #     labels_data: list[str] | None = None,
-    #     **kwargs,
-    # ) -> tuple[int, Exception]:
-    #     """
-    #     Insert embeddings with filter metadata.
-    #     Modified to include filter fields like Milvus does.
-    #     """
-    #     assert len(embeddings) == len(metadata)
-    #     insert_count = 0
-    #     try:
-    #         batch_vectors = []
-    #         for i in range(len(embeddings)):
-    #             vector_data = {
-    #                 "id": str(metadata[i]),
-    #                 "vector": embeddings[i],
-    #                 "meta": {"id": metadata[i]},  # Store id in meta for reference
-    #                 "filter": {
-    #                     self._scalar_id_field: metadata[i]  # Store id for numeric filtering
-    #                 }
-    #             }
+    def insert_embeddings(
+        self,
+        embeddings: Iterable[list[float]],
+        metadata: list[int],
+        labels_data: list[str] | None = None,
+        **kwargs,
+    ) -> tuple[int, Exception]:
+        """
+        Insert embeddings with filter metadata.
+        Modified to include filter fields like Milvus does.
+        """
+        assert len(embeddings) == len(metadata)
+        insert_count = 0
+        try:
+            batch_vectors = []
+            for i in range(len(embeddings)):
+                vector_data = {
+                    "id": str(metadata[i]),
+                    "vector": embeddings[i],
+                    "meta": {"id": metadata[i]},  # Store id in meta for reference
+                    "filter": {
+                        self._scalar_id_field: metadata[i]  # Store id for numeric filtering
+                    }
+                }
                 
-    #             # Add label field if using scalar labels
-    #             if self.with_scalar_labels and labels_data is not None:
-    #                 vector_data["filter"][self._scalar_label_field] = labels_data[i]
+                # Add label field if using scalar labels
+                if self.with_scalar_labels and labels_data is not None:
+                    vector_data["filter"][self._scalar_label_field] = labels_data[i]
                 
-    #             batch_vectors.append(vector_data)
+                batch_vectors.append(vector_data)
                 
-    #         self.index.upsert(batch_vectors)
-    #         insert_count = len(batch_vectors)
+            self.index.upsert(batch_vectors)
+            insert_count = len(batch_vectors)
             
-    #     except Exception as e:
-    #         log.error(f"Failed to insert data: {e}")
-    #         return insert_count, e
+        except Exception as e:
+            log.error(f"Failed to insert data: {e}")
+            return insert_count, e
             
-    #     return (len(embeddings), None)
+        return (len(embeddings), None)
 
 
     # def insert_embeddings(
@@ -495,49 +514,49 @@ class Endee(VectorDB):
     #     return (len(embeddings), None)
 
 
-    def insert_embeddings(
-        self,
-        embeddings: Iterable[list[float]],
-        metadata: list[int],
-        labels_data: list[str] | None = None,
-        **kwargs,
-    ) -> tuple[int, Exception]:
-        assert len(embeddings) == len(metadata)
-        insert_count = 0
-        try:
-            batch_vectors = []
-            for i in range(len(embeddings)):
-                if metadata[i] > 9999 or metadata[i] < 0:
-                    continue
-                vector_data = {
-                    "id": str(metadata[i]),
-                    "vector": embeddings[i],
-                    "meta": {"id": metadata[i]},
-                    "filter": {
-                        self._scalar_id_field: metadata[i]
-                    }
-                }
+    # def insert_embeddings(
+    #     self,
+    #     embeddings: Iterable[list[float]],
+    #     metadata: list[int],
+    #     labels_data: list[str] | None = None,
+    #     **kwargs,
+    # ) -> tuple[int, Exception]:
+    #     assert len(embeddings) == len(metadata)
+    #     insert_count = 0
+    #     try:
+    #         batch_vectors = []
+    #         for i in range(len(embeddings)):
+    #             if metadata[i] > 9999 or metadata[i] < 0:
+    #                 continue
+    #             vector_data = {
+    #                 "id": str(metadata[i]),
+    #                 "vector": embeddings[i],
+    #                 "meta": {"id": metadata[i]},
+    #                 "filter": {
+    #                     self._scalar_id_field: metadata[i]
+    #                 }
+    #             }
                 
-                if self.with_scalar_labels and labels_data is not None:
-                    vector_data["filter"][self._scalar_label_field] = labels_data[i]
+    #             if self.with_scalar_labels and labels_data is not None:
+    #                 vector_data["filter"][self._scalar_label_field] = labels_data[i]
                 
-                batch_vectors.append(vector_data)
+    #             batch_vectors.append(vector_data)
 
-            # # Log matched metadata IDs to file
-            # with open("matched_metadata.txt", "a") as f:
-            #     for v in batch_vectors:
-            #         f.write(v["id"] + "\n")
+    #         # # Log matched metadata IDs to file
+    #         # with open("matched_metadata.txt", "a") as f:
+    #         #     for v in batch_vectors:
+    #         #         f.write(v["id"] + "\n")
 
-            if batch_vectors != []:
-                self.index.upsert(batch_vectors)
-                insert_count = len(batch_vectors)
-            # time.sleep(20)
+    #         if batch_vectors != []:
+    #             self.index.upsert(batch_vectors)
+    #             insert_count = len(batch_vectors)
+    #         # time.sleep(20)
             
-        except Exception as e:
-            log.error(f"Failed to insert data: {e}")
-            return insert_count, e
+    #     except Exception as e:
+    #         log.error(f"Failed to insert data: {e}")
+    #         return insert_count, e
             
-        return (len(embeddings), None)
+    #     return (len(embeddings), None)
 
     def search_embedding(
         self,
