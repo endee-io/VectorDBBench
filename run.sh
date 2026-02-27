@@ -1,0 +1,23 @@
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_reupsertcheck \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.50 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
