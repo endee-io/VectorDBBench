@@ -1,7 +1,8 @@
-import click
 import logging
 import uuid
 from typing import Annotated
+
+import click
 
 from vectordb_bench.cli.cli import (
     CommonTypedDict,
@@ -10,67 +11,102 @@ from vectordb_bench.cli.cli import (
     get_custom_case_config,
     parse_task_stages,
 )
+from vectordb_bench.models import (
+    CaseConfig,
+    CaseType,
+    ConcurrencySearchConfig,
+    TaskConfig,
+)
+
 from .. import DB
-from .config import EndeeConfig
 from ..api import EmptyDBCaseConfig
+from .config import EndeeConfig
 
 log = logging.getLogger(__name__)
 
 
 class EndeeTypedDict(CommonTypedDict):
-    token: Annotated[
-        str, 
-        click.option("--token", type=str, required=True, help="Endee API token")
-    ]
-    region: Annotated[
-        str, 
-        click.option("--region", type=str, default=None, help="Endee region", show_default=True)
-    ]
+    token: Annotated[str, click.option("--token", type=str, required=True, default=None, help="Endee API token")]
+    region: Annotated[str, click.option("--region", type=str, default=None, help="Endee region", show_default=True)]
     base_url: Annotated[
-        str, 
-        click.option("--base-url", type=str, default="http://127.0.0.1:8080/api/v1", help="API server URL", show_default=True)
+        str,
+        click.option(
+            "--base-url", type=str, default="http://127.0.0.1:8080/api/v1", help="API server URL", show_default=True
+        ),
     ]
     space_type: Annotated[
-        str, 
-        click.option("--space-type", type=click.Choice(["cosine", "l2", "ip"]), default="cosine", help="Distance metric", show_default=True)
+        str,
+        click.option(
+            "--space-type",
+            type=click.Choice(["cosine", "l2", "ip"]),
+            default="cosine",
+            help="Distance metric",
+            show_default=True,
+        ),
     ]
     precision: Annotated[
-        str, 
-        click.option("--precision", type=click.Choice(["binary", "int4d", "int8d", "int16d", "float16", "float32"]), default="int8d", help="Quant Level", show_default=True)
+        str,
+        click.option(
+            "--precision",
+            type=click.Choice(["binary", "int8", "int8d", "int16", "int16d", "float16", "float32"]),
+            default="int16",
+            help="Quant Level",
+            show_default=True,
+        ),
     ]
-    version: Annotated[
-        int, 
-        click.option("--version", type=int, default=None, help="Index version", show_default=True)
-    ]
-    m: Annotated[
-        int, 
-        click.option("--m", type=int, default=None, help="HNSW M parameter", show_default=True)
-    ]
+    version: Annotated[int, click.option("--version", type=str, default=None, help="Index version", show_default=True)]
+    m: Annotated[int, click.option("--m", type=int, default=None, help="HNSW M parameter", show_default=True)]
     ef_con: Annotated[
-        int, 
-        click.option("--ef-con", type=int, default=None, help="HNSW construction parameter", show_default=True)
+        int, click.option("--ef-con", type=int, default=None, help="HNSW construction parameter", show_default=True)
     ]
     ef_search: Annotated[
-        int, 
-        click.option("--ef-search", type=int, default=None, help="HNSW search parameter", show_default=True)
+        int, click.option("--ef-search", type=int, default=None, help="HNSW search parameter", show_default=True)
     ]
     index_name: Annotated[
-        str, 
-        click.option("--index-name", type=str, required=True, help="Endee index name (will use a random name if not provided)", show_default=True)
+        str,
+        click.option(
+            "--index-name",
+            type=str,
+            required=True,
+            help="Endee index name (will use a random name if not provided)",
+            show_default=True,
+        ),
     ]
-
+    prefilter_cardinality_threshold: Annotated[
+        int,
+        click.option(
+            "--prefilter-cardinality-threshold",
+            type=int,
+            default=None,
+            help="Use brute-force prefiltering when filter matches ≤N vectors (1k-1M, default: 10k).",
+            show_default=True,
+        ),
+    ]
+    filter_boost_percentage: Annotated[
+        int,
+        click.option(
+            "--filter-boost-percentage",
+            type=int,
+            default=None,
+            help="Increase search limit to offset filtered-out results (range: 0-100, default: 0).",
+            show_default=True,
+        ),
+    ]
 
 
 @click.command()
 @click_parameter_decorators_from_typed_dict(EndeeTypedDict)
 def Endee(**parameters):
+    """
+    Run VectorDBBench against Endee VectorDB.
+    """
     stages = parse_task_stages(
         parameters["drop_old"],
         parameters["load"],
         parameters["search_serial"],
         parameters["search_concurrent"],
     )
-    
+
     # Generate a random collection name if not provided
     collection_name = parameters["index_name"]
     if not collection_name:
@@ -82,11 +118,8 @@ def Endee(**parameters):
 
     custom_case_config = get_custom_case_config(parameters)
 
-    # Create task config
-    from vectordb_bench.models import TaskConfig, CaseConfig, CaseType, ConcurrencySearchConfig
-    
     db_case_config = EmptyDBCaseConfig()
-    
+
     task = TaskConfig(
         db=DB.Endee,
         db_config=db_config,
@@ -97,36 +130,32 @@ def Endee(**parameters):
             concurrency_search_config=ConcurrencySearchConfig(
                 concurrency_duration=parameters["concurrency_duration"],
                 num_concurrency=[int(s) for s in parameters["num_concurrency"]],
-                concurrency_timeout=parameters["concurrency_timeout"], # ========== Added this ==========
+                concurrency_timeout=parameters["concurrency_timeout"],
             ),
             custom_case=custom_case_config,
         ),
         stages=stages,
     )
-    
+
     # Use the run method of the benchmark_runner object
     if not parameters["dry_run"]:
-        # --- TASK LABEL LOGIC START ---
-        # 1. Generate a unique run ID
+        # Generate task label
         run_uuid = uuid.uuid4().hex
-
-        # 2. Pick the base name: Use --task-label if provided, else --index-name
         base_name = parameters.get("task_label")
         if not base_name:
             base_name = parameters.get("index_name", "endee")
 
-        # 3. Combine into the final label: "MyLabel_UUID"
         final_label = f"{base_name}_{run_uuid}"
 
-        # 4. Pass the label to the runner to ensure the filename is correct
+        # Run the benchmark
         benchmark_runner.run([task], final_label)
-        # --- TASK LABEL LOGIC END ---
-        
+
         # Wait for task to complete
         import time
-        from vectordb_bench.interface import global_result_future
         from concurrent.futures import wait
-        
+
+        from vectordb_bench.interface import global_result_future
+
         time.sleep(5)
         if global_result_future:
             wait([global_result_future])
@@ -134,18 +163,3 @@ def Endee(**parameters):
         # Ensure CLI doesn't close while background processes are active
         while benchmark_runner.has_running():
             time.sleep(1)
-
-
-    
-#     # Use the run method of the benchmark_runner object
-#     if not parameters["dry_run"]:
-#         benchmark_runner.run([task])
-        
-#         # Wait for task to complete if needed
-#         import time
-#         from vectordb_bench.interface import global_result_future
-#         from concurrent.futures import wait
-        
-#         time.sleep(5)
-#         if global_result_future:
-#             wait([global_result_future]) 

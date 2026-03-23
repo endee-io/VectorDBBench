@@ -181,7 +181,7 @@ def setup_project(python_exe):
 
     print(f"Installing dependencies using: {venv_pip}")
     run_command([venv_pip, "install", "--upgrade", "pip"])
-    run_command([venv_pip, "install", "endee==0.1.10"])
+    run_command([venv_pip, "install", "endee"])
     run_command([venv_pip, "install", "-e", "."])
     
     return venv_pip

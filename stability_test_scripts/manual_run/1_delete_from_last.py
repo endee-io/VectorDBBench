@@ -6,7 +6,7 @@ from endee import Endee
 from tqdm import tqdm
 
 # ==========================================
-# ⚙️ USER CONFIGURATION
+# USER CONFIGURATION
 # ==========================================
 CONFIG = {
     # Provide EITHER a single file OR the directory containing partitioned files
@@ -20,32 +20,32 @@ CONFIG = {
 # ==========================================
 
 def run_delete():
-    print(f"🔹 Connecting to Endee at {CONFIG['BASE_URL']}...")
+    print(f"Connecting to Endee at {CONFIG['BASE_URL']}...")
     try:
         token = CONFIG["TOKEN"] if CONFIG["TOKEN"] != "TOKEN" else None
         client = Endee(token=token)
         client.set_base_url(CONFIG["BASE_URL"])
         index = client.get_index(name=CONFIG["INDEX_NAME"])
-        print(f"✅ Connected to Index: {CONFIG['INDEX_NAME']}")
+        print(f"Connected to Index: {CONFIG['INDEX_NAME']}")
     except Exception as e:
-        print(f"❌ Connection Failed: {e}")
+        print(f"Connection Failed: {e}")
         return
 
     path = CONFIG["PARQUET_PATH"]
     
     # --- 1. Memory-Efficient Reading Logic ---
     if os.path.isfile(path) and path.endswith('.parquet'):
-        print(f"📂 Reading single Parquet file: {path}")
+        print(f"Reading single Parquet file: {path}")
         df = pd.read_parquet(path)
         df_to_delete = df.tail(CONFIG["DELETE_COUNT"])
         
     elif os.path.isdir(path):
-        print(f"📂 Reading from Parquet directory: {path}")
+        print(f"Reading from Parquet directory: {path}")
         # Find all data files, ignore metadata/test/neighbors files
         all_files = sorted(glob.glob(os.path.join(path, "shuffle_train*.parquet")))
         
         if not all_files:
-            print("❌ No 'shuffle_train*.parquet' files found in directory.")
+            print("No 'shuffle_train*.parquet' files found in directory.")
             return
             
         # Read files backwards so we don't load 10M vectors into RAM!
@@ -64,15 +64,15 @@ def run_delete():
         df_to_delete = df_combined.tail(CONFIG["DELETE_COUNT"])
         
     else:
-        print(f"❌ Invalid path: {path}")
+        print(f"Invalid path: {path}")
         return
 
     # --- 2. Save for Re-Upserting ---
     df_to_delete.to_parquet(CONFIG["TEMP_SAVE_FILE"])
-    print(f"\n💾 Saved the last {CONFIG['DELETE_COUNT']} vectors to {CONFIG['TEMP_SAVE_FILE']} for later.")
+    print(f"\nSaved the last {CONFIG['DELETE_COUNT']} vectors to {CONFIG['TEMP_SAVE_FILE']} for later.")
 
     ids_to_delete = df_to_delete['id'].astype(str).tolist()
-    print(f"🚀 Deleting {len(ids_to_delete)} vectors serially...")
+    print(f"Deleting {len(ids_to_delete)} vectors serially...")
 
     # --- 3. Sequential Deletion ---
     start_time = time.time()
@@ -89,7 +89,7 @@ def run_delete():
             fail += 1
 
     duration = time.time() - start_time
-    print(f"\n✅ Deletion Complete in {duration:.2f}s")
+    print(f"\nDeletion Complete in {duration:.2f}s")
     print(f"   Success: {success}")
     print(f"   Failed:  {fail}")
 

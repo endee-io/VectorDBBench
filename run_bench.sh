@@ -11,7 +11,7 @@ vectordbbench endee \
   --ef-con 128 \
   --ef-search 128 \
   --space-type cosine \
-  --precision int8d \
+  --precision int8 \
   --version 1 \
   --case-type Performance768D1M \
   --k 30 \

@@ -1,34 +1,34 @@
 from pydantic import SecretStr
-from typing import Optional
-from ..api import DBConfig
+
+from vectordb_bench.backend.clients.api import DBConfig
 
 
 class EndeeConfig(DBConfig):
-    token: SecretStr
-    region: Optional[str] = "india-west-1"
-    base_url: str = "http://127.0.0.1:8080/api/v1"  # Default value
-    space_type: str ="cosine"
-    # use_fp16: bool = False
-    precision: str = "medium"
-    version: Optional[int] = 1
-    m: Optional[int] = 16
-    ef_con: Optional[int] = 128
-    ef_search: Optional[int] = 128
-    # collection_name: str
+    token: SecretStr | None = None
+    region: str | None = None
+    base_url: str = "http://127.0.0.1:8080/api/v1"
+    space_type: str = "cosine"
+    precision: str = "int16"
+    version: str | None = None
+    m: int | None = 16
+    ef_con: int | None = 128
+    ef_search: int | None = 128
     index_name: str
-    
+    prefilter_cardinality_threshold: int | None = 10000
+    filter_boost_percentage: int | None = 0
+
     def to_dict(self) -> dict:
         return {
-            "token": self.token.get_secret_value(),
+            "token": self.token.get_secret_value() if self.token else None,
             "region": self.region,
             "base_url": self.base_url,
             "space_type": self.space_type,
-            # "use_fp16": self.use_fp16,
             "precision": self.precision,
             "version": self.version,
             "m": self.m,
             "ef_con": self.ef_con,
             "ef_search": self.ef_search,
-            # "collection_name": self.collection_name,
             "index_name": self.index_name,
+            "prefilter_cardinality_threshold": self.prefilter_cardinality_threshold,
+            "filter_boost_percentage": self.filter_boost_percentage,
         }

@@ -3,7 +3,7 @@
 # ========================================================================
 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
   --token "TOKEN" \
-  --region india-west-1 \
+  --region location \
   --base-url "http://127.0.0.1:8080/api/v1" \
   --index-name test_index_name \
   --task-label "20260107" \
@@ -11,7 +11,7 @@ DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
   --ef-con 128 \
   --ef-search 128 \
   --space-type cosine \
-  --precision int8d \
+  --precision int8 \
   --version 1 \
   --case-type Performance768D1M \
   --k 30 \
@@ -30,7 +30,7 @@ DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
 # ========================================================================
 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
   --token "TOKEN" \
-  --region india-west-1 \
+  --region location \
   --base-url "http://127.0.0.1:8080/api/v1" \
   --index-name test_index_name\
   --task-label "20260107" \
@@ -38,7 +38,7 @@ DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
   --ef-con 128 \
   --ef-search 128 \
   --space-type cosine \
-  --precision int8d \
+  --precision int8 \
   --version 1 \
   --case-type Performance768D1M \
   --k 30 \
@@ -54,9 +54,9 @@ DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
 # ========================================================================
 # WITH CHANGED BATCH SIZE, CREATING A NEW INDEX AND START THE PROCESS 
 # ========================================================================
-NUM_PER_BATCH=10000 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
+NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
   --token "TOKEN" \
-  --region india-west-1 \
+  --region location \
   --base-url "http://127.0.0.1:8080/api/v1" \
   --index-name test_index_name \
   --task-label "20260107" \
@@ -64,9 +64,65 @@ NUM_PER_BATCH=10000 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench 
   --ef-con 128 \
   --ef-search 128 \
   --space-type cosine \
-  --precision int8d \
+  --precision int8 \
   --version 1 \
   --case-type Performance768D1M \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+
+# ========================================================================
+# FILTER SPECIFIC: USING NEW INT FILTER PERFORMANCE CASE (NumGE)
+# ========================================================================
+NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
+  --token "TOKEN" \
+  --region location \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_int_filter \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.99 \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+
+# ========================================================================
+# FILTER SPECIFIC: USING LABEL FILTER PERFORMANCE CASE (StrGE)
+# ========================================================================
+NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
+  --token "TOKEN" \
+  --region location \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_label_filter \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.02 \
   --k 30 \
   --num-concurrency "8" \
   --concurrency-duration 30 \

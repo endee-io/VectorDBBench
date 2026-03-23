@@ -5,7 +5,7 @@ from endee import Endee
 from tqdm import tqdm
 
 # ==========================================
-# ⚙️ USER CONFIGURATION
+# USER CONFIGURATION
 # ==========================================
 CONFIG = {
     "TEMP_SAVE_FILE": "./deleted_vectors_temp.parquet", 
@@ -17,27 +17,27 @@ CONFIG = {
 # ==========================================
 
 def run_upsert():
-    print(f"🔹 Connecting to Endee at {CONFIG['BASE_URL']}...")
+    print(f"Connecting to Endee at {CONFIG['BASE_URL']}...")
     try:
         token = CONFIG["TOKEN"] if CONFIG["TOKEN"] != "TOKEN" else None
         client = Endee(token=token)
         client.set_base_url(CONFIG["BASE_URL"])
         index = client.get_index(name=CONFIG["INDEX_NAME"])
-        print(f"✅ Connected to Index: {CONFIG['INDEX_NAME']}")
+        print(f"Connected to Index: {CONFIG['INDEX_NAME']}")
     except Exception as e:
-        print(f"❌ Connection Failed: {e}")
+        print(f"Connection Failed: {e}")
         return
 
     if not os.path.exists(CONFIG["TEMP_SAVE_FILE"]):
-        print(f"❌ Saved vectors not found! Run the deletion script first.")
+        print(f"Saved vectors not found! Run the deletion script first.")
         return
 
-    print(f"📂 Reading deleted vectors from: {CONFIG['TEMP_SAVE_FILE']}")
+    print(f"Reading deleted vectors from: {CONFIG['TEMP_SAVE_FILE']}")
     df = pd.read_parquet(CONFIG["TEMP_SAVE_FILE"])
     
     vector_col = 'emb' if 'emb' in df.columns else 'vector' 
 
-    print(f"🔄 Formatting {len(df)} rows to exactly match benchmark structure...")
+    print(f"Formatting {len(df)} rows to exactly match benchmark structure...")
     
     # --- 1. Format exactly like the DB benchmark ---
     records = []
@@ -54,11 +54,11 @@ def run_upsert():
 
     # --- 2. Chunk into batches ---
     batches = [records[i:i + CONFIG["BATCH_SIZE"]] for i in range(0, len(records), CONFIG["BATCH_SIZE"])]
-    print(f"📦 Created {len(batches)} batches of {CONFIG['BATCH_SIZE']} vectors.")
+    print(f"Created {len(batches)} batches of {CONFIG['BATCH_SIZE']} vectors.")
 
     # --- 3. Sequential Upserting ---
     start_time = time.time()
-    print("🚀 Upserting serially...")
+    print("Upserting serially...")
 
     success_count, fail_count = 0, 0
     
@@ -71,13 +71,13 @@ def run_upsert():
             fail_count += 1
 
     duration = time.time() - start_time
-    print(f"\n✅ Upsert API Calls Complete in {duration:.2f}s")
+    print(f"\nUpsert API Calls Complete in {duration:.2f}s")
     print(f"   API Reported Upserted Vectors: {success_count}")
     if fail_count > 0:
         print(f"   API Failed Batches: {fail_count}")
 
     # --- 4. Sequential Verification Step ---
-    print(f"\n🔍 Verifying actual insertions using get_vector...")
+    print(f"\nVerifying actual insertions using get_vector...")
     present_count = 0
     missing_count = 0
 
@@ -96,16 +96,16 @@ def run_upsert():
             missing_count += 1
 
     verify_duration = time.time() - start_verify
-    print(f"\n✅ Verification Complete in {verify_duration:.2f}s")
+    print(f"\nVerification Complete in {verify_duration:.2f}s")
     print(f"   Successfully Upserted (Confirmed): {present_count}")
     print(f"   Missing (Failed to Index):         {missing_count}")
 
     # --- CLEANUP CODE ---
     if missing_count == 0 and os.path.exists(CONFIG["TEMP_SAVE_FILE"]):
         os.remove(CONFIG["TEMP_SAVE_FILE"])
-        print(f"🗑️  Cleanup: Successfully deleted temporary file '{CONFIG['TEMP_SAVE_FILE']}'")
+        print(f"Cleanup: Successfully deleted temporary file '{CONFIG['TEMP_SAVE_FILE']}'")
     elif missing_count > 0:
-        print(f"⚠️  Cleanup Skipped: Temp file kept because {missing_count} vectors are missing.")
+        print(f"Cleanup Skipped: Temp file kept because {missing_count} vectors are missing.")
 
 if __name__ == "__main__":
     run_upsert()

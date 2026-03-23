@@ -8,7 +8,7 @@ import subprocess
 from endee import Endee
 from tqdm import tqdm
 
-# python3 -u stability_test_scripts/iterations/2_int8d.py 2>&1 | tee -a logs/log1_1M_int8d_m16_efcon128.log
+# python3 -u stability_test_scripts/iterations/2_int8.py 2>&1 | tee -a logs/log1_1M_int8_m16_efcon128.log
 
 # ==========================================
 # USER CONFIGURATION
@@ -19,8 +19,8 @@ CONFIG = {
     "DISABLE_TQDM":   True,  # SET TO TRUE if piping to a .log file!
     "TOKEN":          "TOKEN",  
     "BASE_URL":       "http://54.37.77.76:8047/api/v1",
-    "INDEX_NAME":     "backup_1M_int8d_m16_efcon128_1",
-    "PRECISION":      "int8d",
+    "INDEX_NAME":     "backup_1M_int8_m16_efcon128_1",
+    "PRECISION":      "int8",
     
     # --- Deletion/Upsert Settings ---
     "PARQUET_PATH":   "/home/debian/ssd/vectordataset/cohere/cohere_medium_1m/shuffle_train.parquet", 
