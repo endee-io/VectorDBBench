@@ -9,7 +9,7 @@ class EndeeConfig(DBConfig):
     base_url: str = "http://127.0.0.1:8080/api/v1"  # Default value
     space_type: str ="cosine"
     # use_fp16: bool = False
-    precision: str = "medium"
+    precision: str = "int16"
     version: Optional[int] = 1
     m: Optional[int] = 16
     ef_con: Optional[int] = 128

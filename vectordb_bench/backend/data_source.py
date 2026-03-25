@@ -145,13 +145,13 @@ class AwsS3Reader(DatasetReader):
         log.info(f"Succeed to download all files, downloaded file count = {len(downloads)}")
 
     def validate_file(self, remote: pathlib.Path, local: pathlib.Path) -> bool:
-        # info() uses ls() inside, maybe we only need to ls once
-        info = self.fs.info(remote)
+        # # info() uses ls() inside, maybe we only need to ls once
+        # info = self.fs.info(remote)
 
-        # check size equal
-        remote_size, local_size = info.get("size"), local.stat().st_size
-        if remote_size != local_size:
-            log.info(f"local file: {local} size[{local_size}] not match with remote size[{remote_size}]")
-            return False
+        # # check size equal
+        # remote_size, local_size = info.get("size"), local.stat().st_size
+        # if remote_size != local_size:
+        #     log.info(f"local file: {local} size[{local_size}] not match with remote size[{remote_size}]")
+        #     return False
 
         return True

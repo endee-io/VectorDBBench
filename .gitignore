@@ -22,3 +22,7 @@ ground_truth_ids.csv
 matched_metadata.txt
 vectordataset_label/
 venv2/
+vectordataset_gt/
+vectordataset_lt/
+vectordataset_lte/
+venv3/

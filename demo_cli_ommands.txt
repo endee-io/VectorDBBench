@@ -28,21 +28,21 @@ DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
 # ========================================================================
 # FOR USING THE EXISTING INDEX
 # ========================================================================
-DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
-  --token "TOKEN" \
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset" vectordbbench endee \
+  --token "localtest" \
   --region india-west-1 \
-  --base-url "http://127.0.0.1:8080/api/v1" \
-  --index-name test_index_name\
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_filter_1803_adup6\
   --task-label "20260107" \
   --m 16 \
   --ef-con 128 \
-  --ef-search 128 \
+  --ef-search 256 \
   --space-type cosine \
-  --precision int8d \
+  --precision float32 \
   --version 1 \
   --case-type Performance768D1M \
-  --k 30 \
-  --num-concurrency "8" \
+  --k 1000 \
+  --num-concurrency "16" \
   --concurrency-duration 30 \
   --concurrency-timeout 3600 \
   --skip-drop-old \
@@ -1070,5 +1070,514 @@ DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" ve
   --concurrency-timeout 3600 \
   --skip-drop-old \
   --skip-load \
+  --search-concurrent \
+  --search-serial
+  
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_reupsertcheck \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_reupsertcheck \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.001 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+curl -X POST "http://localhost:8080/api/v1/index/test_1M_vaib_labelfilter_reupsertcheck/backup" \
+     -H "Content-Type: application/json" \
+     -d '{"name": "labelfilter_1M_backup"}'
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_duplicate1 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.99 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.99 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+  
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup5 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --prefilter-cardinality-threshold 20000 \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup4 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.001 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_lte" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup6 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_lte" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup6 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --prefilter-cardinality-threshold 20000 \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.99 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_gt" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup7 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_gt" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup7 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --prefilter-cardinality-threshold 9999 \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.80 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_lt" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup8 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_lt" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup8 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --prefilter-cardinality-threshold 9999 \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1_adup_original \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.001 \
+  --k 100 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_labelfilter_0503_1 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.02 \
+  --k 100 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+    DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_lt" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_filter_1503_adup1 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16d \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0.99 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_filter_1503 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_1M_vaib_filter_1503 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --prefilter-cardinality-threshold 20000 \
+  --precision int16 \
+  --version 1 \
+  --case-type NewIntFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --filter-rate 0. \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_latest_master_1803_2 \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "TOKEN" \
+  --region location \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test \
+  --task-label "test" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type Performance768D1M \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
   --search-concurrent \
   --search-serial
