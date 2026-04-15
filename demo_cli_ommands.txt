@@ -1581,3 +1581,120 @@ curl -X POST "http://localhost:8080/api/v1/index/test_1M_vaib_labelfilter_reupse
   --load \
   --search-concurrent \
   --search-serial
+
+
+  NUM_PER_BATCH=10000 DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label_10M" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_shaleen_10M \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Large Cohere (768dim, 10M)" \
+  --label-percentage 0.01 \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label_10M" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_shaleen_10M \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type Performance768D10M \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name vineet_int8 \
+  --task-label "test" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int8 \
+  --version 1 \
+  --case-type Performance768D1M \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name vineet_int8e_binary \
+  --task-label "test" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision binary \
+  --version 1 \
+  --case-type Performance768D1M \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+  DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name vineet_int16 \
+  --task-label "test" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type Performance768D1M \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial

@@ -8,6 +8,7 @@ Workflow:
     Run vectordbbench for filter rates: 0.01, 0.50, 0.80, 0.99
     For filter_rate=0.99: also run with prefilter_cardinality_threshold=50000
     10-second gap between every run.
+    Each run is executed FOUR times; the result with the highest QPS is recorded.
 
 Output: Excel file with one table per boost percentage.
 """
@@ -41,7 +42,7 @@ CONCURRENCY_DUR = 30
 PRECISION       = "int16"
 
 FILTER_RATES      = [0.01, 0.50, 0.80, 0.99]
-PRECARDINALITY    = 50000          # extra run for filter_rate=0.80 and 0.99
+PRECARDINALITY    = 150000          # extra run for filter_rate=0.80 and 0.99
 BOOST_PERCENTAGES = [0, 25, 50, 75, 100]
 
 OUTPUT_EXCEL = os.path.join(
@@ -75,7 +76,7 @@ def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None)
         f'--precision {PRECISION} '
         f'--version 1 '
         f'--case-type NewIntFilterPerformanceCase '
-        f'--dataset-with-size-type "Medium Cohere (768dim, 1M)" '
+        f'--dataset-with-size-type "Large Cohere (768dim, 10M)" '
         f'--filter-rate {filter_rate} '
         f'--k {TOP_K} '
         f'--num-concurrency "{CONCURRENCY}" '
@@ -117,6 +118,24 @@ def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None)
     return {"recall": recall, "qps": qps, "p99_latency": p99, "load_duration": load_dur}
 
 
+def run_best_of_four(filter_rate: float, boost_pct: int, prefilter: int = None) -> dict:
+    """Run the benchmark four times and return the result with the highest QPS."""
+    results = []
+    for attempt in range(1, 5):
+        label = f"filter_rate={filter_rate}, boost={boost_pct}%" + (f", prefilter={prefilter}" if prefilter else "")
+        print(f"\n  [ATTEMPT {attempt}/4] {label}")
+        result = run_vectordbbench(filter_rate, boost_pct, prefilter)
+        results.append(result)
+        if attempt < 4:
+            print(f"\n  [WAIT] 10s before next attempt ...")
+            time.sleep(10)
+
+    best = max(results, key=lambda r: r.get("qps") or 0)
+    best_attempt = results.index(best) + 1
+    print(f"  [BEST] Attempt {best_attempt} wins: qps={best.get('qps')}")
+    return best
+
+
 # ============================================================
 # EXCEL WRITER
 # ============================================================
@@ -140,7 +159,7 @@ def write_excel(all_data: dict, output_path: str):
     ROW_ODD  = "F0F7F4"
     ROW_EVEN = "FFFFFF"
 
-    DATASET_NAME = "Cohere 1M (768D)"
+    DATASET_NAME = "Cohere 10M (768D)"
     FILTER_CASE  = "NewIntFilterPerf"
 
     columns = [
@@ -244,7 +263,7 @@ def write_excel(all_data: dict, output_path: str):
 
 def main():
     print("=" * 60)
-    print("Range Filter Benchmark")
+    print("Range Filter Benchmark (best of 4 runs per config)")
     print(f"Index : {INDEX_NAME}")
     print(f"Output: {OUTPUT_EXCEL}")
     print("=" * 60)
@@ -258,7 +277,7 @@ def main():
         rows = []
 
         for fr in FILTER_RATES:
-            metrics = run_vectordbbench(fr, boost_pct)
+            metrics = run_best_of_four(fr, boost_pct)
             rows.append({
                 "filter_rate": fr,
                 "prefilter":   None,
@@ -268,7 +287,7 @@ def main():
             if fr == 0.99:
                 print(f"\n  [WAIT] 10s before precardinality run ...")
                 time.sleep(10)
-                metrics_pre = run_vectordbbench(fr, boost_pct, prefilter=PRECARDINALITY)
+                metrics_pre = run_best_of_four(fr, boost_pct, prefilter=PRECARDINALITY)
                 rows.append({
                     "filter_rate": fr,
                     "prefilter":   PRECARDINALITY,

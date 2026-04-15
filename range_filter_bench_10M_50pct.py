@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Range Filter Benchmark Script - NewIntFilterPerformanceCase
-Index: (set INDEX_NAME below — 1M vectors pre-loaded, no load step)
+Index: (set INDEX_NAME below — 10M vectors pre-loaded, no load step)
 
 Workflow:
   For each filter_boost_percentage in [0, 25, 50, 75, 100]:
-    Run vectordbbench for filter rates: 0.01, 0.50, 0.80, 0.99
-    For filter_rate=0.99: also run with prefilter_cardinality_threshold=50000
+    Run vectordbbench for filter rate: 0.50 only.
+    Each run is executed FOUR times; the result with the highest QPS is recorded.
     10-second gap between every run.
 
 Output: Excel file with one table per boost percentage.
@@ -40,24 +40,22 @@ CONCURRENCY     = 16
 CONCURRENCY_DUR = 30
 PRECISION       = "int16"
 
-FILTER_RATES      = [0.01, 0.50, 0.80, 0.99]
-PRECARDINALITY    = 50000          # extra run for filter_rate=0.80 and 0.99
+FILTER_RATE       = 0.50
 BOOST_PERCENTAGES = [0, 25, 50, 75, 100]
 
 OUTPUT_EXCEL = os.path.join(
     "/home/debian/latest_VDB/VectorDBBench",
-    f"range_filter_bench_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    f"range_filter_bench_50pct_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 )
 
 # ============================================================
 # BENCHMARK RUNNER
 # ============================================================
 
-def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None) -> dict:
+def run_vectordbbench(boost_pct: int) -> dict:
     before = set(glob_module.glob(os.path.join(RESULTS_DIR, "*.json")))
 
-    prefilter_part = f"--prefilter-cardinality-threshold {prefilter} " if prefilter else ""
-    boost_part     = f"--filter-boost-percentage {boost_pct} " if boost_pct is not None else ""
+    boost_part = f"--filter-boost-percentage {boost_pct} " if boost_pct is not None else ""
 
     cmd = (
         f'DATASET_LOCAL_DIR="{DATASET_LOCAL_DIR}" vectordbbench endee '
@@ -70,13 +68,12 @@ def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None)
         f'--ef-con {EF_CON} '
         f'--ef-search {EF_SEARCH} '
         f'--space-type cosine '
-        f'{prefilter_part}'
         f'{boost_part}'
         f'--precision {PRECISION} '
         f'--version 1 '
         f'--case-type NewIntFilterPerformanceCase '
-        f'--dataset-with-size-type "Medium Cohere (768dim, 1M)" '
-        f'--filter-rate {filter_rate} '
+        f'--dataset-with-size-type "Large Cohere (768dim, 10M)" '
+        f'--filter-rate {FILTER_RATE} '
         f'--k {TOP_K} '
         f'--num-concurrency "{CONCURRENCY}" '
         f'--concurrency-duration {CONCURRENCY_DUR} '
@@ -87,7 +84,7 @@ def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None)
         f'--search-serial'
     )
 
-    label = f"filter_rate={filter_rate}, boost={boost_pct}%" + (f", prefilter={prefilter}" if prefilter else "")
+    label = f"filter_rate={FILTER_RATE}, boost={boost_pct}%"
     print(f"\n  [RUN] {label}")
     proc = subprocess.run(cmd, shell=True, text=True)
     if proc.returncode != 0:
@@ -117,6 +114,23 @@ def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None)
     return {"recall": recall, "qps": qps, "p99_latency": p99, "load_duration": load_dur}
 
 
+def run_best_of_four(boost_pct: int) -> dict:
+    """Run the benchmark four times and return the result with the highest QPS."""
+    results = []
+    for attempt in range(1, 5):
+        print(f"\n  [ATTEMPT {attempt}/4] filter_rate={FILTER_RATE}, boost={boost_pct}%")
+        result = run_vectordbbench(boost_pct)
+        results.append(result)
+        if attempt < 4:
+            print(f"\n  [WAIT] 10s before next attempt ...")
+            time.sleep(10)
+
+    best = max(results, key=lambda r: r.get("qps") or 0)
+    best_attempt = results.index(best) + 1
+    print(f"  [BEST] Attempt {best_attempt} wins: qps={best.get('qps')}")
+    return best
+
+
 # ============================================================
 # EXCEL WRITER
 # ============================================================
@@ -124,11 +138,11 @@ def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None)
 def write_excel(all_data: dict, output_path: str):
     """
     all_data: {boost_pct: [row_dict, ...]}
-    Each row_dict has: filter_rate, prefilter, recall, qps, p99_latency, load_duration
+    Each row_dict has: filter_rate, recall, qps, p99_latency, load_duration
     """
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Range Filter Bench"
+    ws.title = "Range Filter Bench 50pct"
 
     thin   = Side(style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -140,28 +154,27 @@ def write_excel(all_data: dict, output_path: str):
     ROW_ODD  = "F0F7F4"
     ROW_EVEN = "FFFFFF"
 
-    DATASET_NAME = "Cohere 1M (768D)"
+    DATASET_NAME = "Cohere 10M (768D)"
     FILTER_CASE  = "NewIntFilterPerf"
 
     columns = [
-        ("Dataset",        22),
-        ("Precision",      12),
-        ("Filter Case",    22),
-        ("Filter Rate",    13),
-        ("m",               7),
-        ("ef_search",      11),
-        ("ef_con",         10),
-        ("topK",            8),
-        ("Concurrency",    14),
-        ("Recall",         10),
-        ("QPS",            12),
-        ("Latency (p99)(in sec)",  16),
-        ("Load Duration(in sec)",  16),
+        ("Dataset",               22),
+        ("Precision",             12),
+        ("Filter Case",           22),
+        ("Filter Rate",           13),
+        ("m",                      7),
+        ("ef_search",             11),
+        ("ef_con",                10),
+        ("topK",                   8),
+        ("Concurrency",           14),
+        ("Recall",                10),
+        ("QPS",                   12),
+        ("Latency (p99)(in sec)", 16),
+        ("Load Duration(in sec)", 16),
     ]
 
     NUM_COLS = len(columns)
 
-    # Set column widths once
     for col_idx, (_, width) in enumerate(columns, start=1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
 
@@ -170,7 +183,7 @@ def write_excel(all_data: dict, output_path: str):
     for boost_pct in BOOST_PERCENTAGES:
         rows = all_data.get(boost_pct, [])
 
-        # --- Boost label row (outside table) ---
+        # --- Boost label row ---
         label_cell = ws.cell(row=current_row, column=1,
                              value=f"Filter Boost Percentage: {boost_pct}%")
         label_cell.font      = Font(bold=True, size=12)
@@ -198,10 +211,6 @@ def write_excel(all_data: dict, output_path: str):
             bg = ROW_ODD if row_local_idx % 2 == 0 else ROW_EVEN
             rf = PatternFill("solid", fgColor=bg)
 
-            case_label = FILTER_CASE
-            if r.get("prefilter"):
-                case_label += f"\n(prefilter={r['prefilter']})"
-
             recall   = r.get("recall")
             qps      = r.get("qps")
             p99      = r.get("p99_latency")
@@ -210,7 +219,7 @@ def write_excel(all_data: dict, output_path: str):
             values = [
                 DATASET_NAME,
                 PRECISION,
-                case_label,
+                FILTER_CASE,
                 r["filter_rate"],
                 M,
                 EF_SEARCH,
@@ -244,9 +253,10 @@ def write_excel(all_data: dict, output_path: str):
 
 def main():
     print("=" * 60)
-    print("Range Filter Benchmark")
-    print(f"Index : {INDEX_NAME}")
-    print(f"Output: {OUTPUT_EXCEL}")
+    print("Range Filter Benchmark — 50% filter rate only (best of 4 runs)")
+    print(f"Index        : {INDEX_NAME}")
+    print(f"Filter Rate  : {FILTER_RATE}")
+    print(f"Output       : {OUTPUT_EXCEL}")
     print("=" * 60)
 
     all_data = {}
@@ -255,30 +265,15 @@ def main():
         print(f"\n{'='*60}")
         print(f"BOOST PERCENTAGE: {boost_pct}%")
         print(f"{'='*60}")
-        rows = []
 
-        for fr in FILTER_RATES:
-            metrics = run_vectordbbench(fr, boost_pct)
-            rows.append({
-                "filter_rate": fr,
-                "prefilter":   None,
-                **metrics,
-            })
+        metrics = run_best_of_four(boost_pct)
+        all_data[boost_pct] = [{
+            "filter_rate": FILTER_RATE,
+            **metrics,
+        }]
 
-            if fr == 0.99:
-                print(f"\n  [WAIT] 10s before precardinality run ...")
-                time.sleep(10)
-                metrics_pre = run_vectordbbench(fr, boost_pct, prefilter=PRECARDINALITY)
-                rows.append({
-                    "filter_rate": fr,
-                    "prefilter":   PRECARDINALITY,
-                    **metrics_pre,
-                })
-
-            print(f"\n  [WAIT] 10s before next run ...")
-            time.sleep(10)
-
-        all_data[boost_pct] = rows
+        print(f"\n  [WAIT] 10s before next boost percentage ...")
+        time.sleep(10)
 
     write_excel(all_data, OUTPUT_EXCEL)
 

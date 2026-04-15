@@ -1,0 +1,21 @@
+DATASET_LOCAL_DIR="/home/debian/latest_VDB/VectorDBBench/vectordataset_label_10M" vectordbbench endee \
+  --token "localtest" \
+  --region india-west-1 \
+  --base-url "http://148.113.54.173:8080/api/v1" \
+  --index-name test_shaleen_10M \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --version 1 \
+  --case-type Performance768D10M \
+  --k 30 \
+  --num-concurrency "16" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial

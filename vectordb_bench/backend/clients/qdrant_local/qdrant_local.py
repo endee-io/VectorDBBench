@@ -287,7 +287,7 @@ class QdrantLocal(VectorDB):
         dim: int,
         db_config: dict,
         db_case_config: QdrantLocalIndexConfig,
-        collection_name: str = "QdrantLocalCollection_1703",
+        collection_name: str = "QdrantLocalCollection_10M_2903_tmux",
         drop_old: bool = False,
         with_scalar_labels: bool = False,
         name: str = "QdrantLocal",

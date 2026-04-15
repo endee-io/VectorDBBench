@@ -41,7 +41,7 @@ CONCURRENCY_DUR = 30
 PRECISION       = "int16"
 
 FILTER_RATES      = [0.01, 0.50, 0.80, 0.99]
-PRECARDINALITY    = 50000          # extra run for filter_rate=0.80 and 0.99
+PRECARDINALITY    = 150000          # extra run for filter_rate=0.80 and 0.99
 BOOST_PERCENTAGES = [0, 25, 50, 75, 100]
 
 OUTPUT_EXCEL = os.path.join(
@@ -75,7 +75,7 @@ def run_vectordbbench(filter_rate: float, boost_pct: int, prefilter: int = None)
         f'--precision {PRECISION} '
         f'--version 1 '
         f'--case-type NewIntFilterPerformanceCase '
-        f'--dataset-with-size-type "Medium Cohere (768dim, 1M)" '
+        f'--dataset-with-size-type "Large Cohere (768dim, 10M)" '
         f'--filter-rate {filter_rate} '
         f'--k {TOP_K} '
         f'--num-concurrency "{CONCURRENCY}" '
@@ -140,7 +140,7 @@ def write_excel(all_data: dict, output_path: str):
     ROW_ODD  = "F0F7F4"
     ROW_EVEN = "FFFFFF"
 
-    DATASET_NAME = "Cohere 1M (768D)"
+    DATASET_NAME = "Cohere 10M (768D)"
     FILTER_CASE  = "NewIntFilterPerf"
 
     columns = [

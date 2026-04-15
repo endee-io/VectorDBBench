@@ -10,7 +10,7 @@ from tqdm import tqdm
 DATASET_NAME = "cohere"  # Options: "cohere", "laion"
 
 # 2. ROOT DIRECTORY
-ROOT_DIR = "/home/admin/vectordataset"
+ROOT_DIR = "/home/debian/latest_VDB/VectorDBBench/vectordataset_label_10M"
 
 # ===================================================================
 

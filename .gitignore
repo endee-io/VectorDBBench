@@ -25,4 +25,5 @@ venv2/
 vectordataset_gt/
 vectordataset_lt/
 vectordataset_lte/
+vectordataset_label_10M/
 venv3/

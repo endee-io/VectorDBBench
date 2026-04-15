@@ -172,7 +172,7 @@ class Endee(VectorDB):
             # Endee supports $range, NOT $gte
             # Dataset size = 1 million → finite upper bound
             self.filter_expr = [
-                {self._scalar_id_field: {"$range": [filters.int_value, 1_000_000]}}
+                {self._scalar_id_field: {"$range": [filters.int_value, 10000000]}}
             ]
 
         elif filters.type == FilterOp.StrEqual:
