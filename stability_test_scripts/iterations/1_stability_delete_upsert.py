@@ -18,7 +18,7 @@ CONFIG = {
     "NUM_ITERATIONS": 1,
     "DISABLE_TQDM":   True,  # SET TO TRUE if piping to a .log file!
     "TOKEN":          "TOKEN",  
-    "BASE_URL":       "http://54.37.77.76:8050/api/v1",
+    "BASE_URL":       "http://localhost:8080/api/v1",
     "INDEX_NAME":     "1M_int16_m16_efcon128_1",
     "PRECISION":      "int16",
     

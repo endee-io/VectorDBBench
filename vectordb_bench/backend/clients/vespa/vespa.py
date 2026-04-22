@@ -120,7 +120,16 @@ class Vespa(VectorDB):
 
         ranking = self.case_config.quantization_type
 
-        result = self.client.query({"yql": yql, "input.query(query_embedding)": query_embedding, "ranking": ranking})
+        # ========== MODIFIED ==========
+        # result = self.client.query({"yql": yql, "input.query(query_embedding)": query_embedding, "ranking": ranking})
+        # return [child["fields"]["id"] for child in result.get_json()["root"]["children"]]
+
+        result = self.client.query({
+            "yql": yql, 
+            "hits": k,
+            "input.query(query_embedding)": query_embedding, 
+            "ranking": ranking
+        })
         return [child["fields"]["id"] for child in result.get_json()["root"]["children"]]
 
     def optimize(self, data_size: int | None = None):

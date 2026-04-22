@@ -14,7 +14,7 @@ CONFIG = {
     "TEMP_SAVE_FILE": "./deleted_vectors_temp.parquet", 
     "INDEX_NAME":     "1M_int16d_m16_efcon128_1",
     "TOKEN":          None,  
-    "BASE_URL":       "http://57.129.55.56:8050/api/v1",
+    "BASE_URL":       "http://localhost:8080/api/v1",
     "DELETE_COUNT":   100000          
 }
 # ==========================================

@@ -21,7 +21,7 @@ CONFIG = {
     "INDEX_NAME":        "1M_int16_1", # All hitting the exact same index!
     
     "TOKEN":             "TOKEN",  
-    "BASE_URL":          "http://172.31.10.144:8080/api/v1",
+    "BASE_URL":          "http://localhost:8080/api/v1",
     
     # Notice this is now the BASE path of our newly generated client folders
     "BASE_DATASET_DIR":  "/home/admin/vectordataset_clients", 

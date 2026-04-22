@@ -23,7 +23,7 @@ CONFIG = {
     
     # --- BENCHMARK SETTINGS ---
     "TOKEN":             "TOKEN",  
-    "BASE_URL":          "http://172.31.10.144:8080/api/v1",
+    "BASE_URL":          "http://localhost:8080/api/v1",
     
     # Set this to the base directory where your client folders live
     "BASE_DATASET_DIR":  "/home/admin/vectordataset_clients", 

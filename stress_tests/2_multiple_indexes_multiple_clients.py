@@ -18,7 +18,7 @@ CONFIG = {
     
     # --- BENCHMARK SETTINGS ---
     "TOKEN":             "TOKEN",  
-    "BASE_URL":          "http://172.31.10.144:8080/api/v1",
+    "BASE_URL":          "http://localhost:8080/api/v1",
     "DATASET_LOCAL_DIR": "/home/admin/vectordataset",
     "M":                 16,
     "EF_CON":            128,
