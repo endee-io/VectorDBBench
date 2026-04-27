@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""
+Concurrency Benchmark Script - Vespa - Performance768D1M
+(vectors pre-loaded, no load step)
+
+Workflow:
+  Run vectordbbench vespa for concurrency values:
+    2, 4, 8, 16, 24
+  Fixed top-k = 30.
+  Each run is executed FOUR times; the result with the highest QPS is recorded.
+  10-second gap between every run.
+
+Output: Excel file with results.
+"""
+
+import subprocess
+import json
+import os
+import time
+import glob as glob_module
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from datetime import datetime
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+URI               = "http://148.113.58.83"
+PORT              = 8080
+DATASET_LOCAL_DIR = "/home/debian/latest_VDB/VectorDBBench/vectordataset_label"
+RESULTS_DIR       = "/home/debian/latest_VDB/VectorDBBench/vectordb_bench/results/Vespa"
+TASK_LABEL_PREFIX = "concurrency_bench_vespa"
+
+M               = 16
+EF_SEARCH       = 128
+EF_CON          = 128
+TOP_K           = 30
+CONCURRENCY_DUR = 30
+QUANTIZATION    = "bfloat16"   # none | bfloat16 | int8 | binary
+SPACE_TYPE      = "cosine"
+DATABASE        = "Vespa"
+
+CONCURRENCY_VALUES = [2, 4, 5, 6, 8, 16, 24]
+
+OUTPUT_EXCEL = os.path.join(
+    "/home/debian/latest_VDB/VectorDBBench",
+    f"concurrency_bench_vespa_{QUANTIZATION}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+)
+
+# ============================================================
+# BENCHMARK RUNNER
+# ============================================================
+
+def run_vectordbbench(concurrency: int) -> dict:
+    before = set(glob_module.glob(os.path.join(RESULTS_DIR, "*.json")))
+    task_label = f"{TASK_LABEL_PREFIX}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    cmd = (
+        f'DATASET_LOCAL_DIR="{DATASET_LOCAL_DIR}" vectordbbench vespa '
+        f'--uri "{URI}" '
+        f'--port {PORT} '
+        f'--m {M} '
+        f'--ef-construction {EF_CON} '
+        f'--ef-search {EF_SEARCH} '
+        f'--quantization {QUANTIZATION} '
+        f'--case-type Performance768D1M '
+        f'--k {TOP_K} '
+        f'--num-concurrency "{concurrency}" '
+        f'--concurrency-duration {CONCURRENCY_DUR} '
+        f'--concurrency-timeout 3600 '
+        f'--skip-drop-old '
+        f'--skip-load '
+        f'--search-concurrent '
+        f'--search-serial'
+    )
+
+    label = f"concurrency={concurrency}"
+    print(f"\n  [RUN] {label}")
+    proc = subprocess.run(cmd, shell=True, text=True)
+    if proc.returncode != 0:
+        print(f"  [WARN] vectordbbench exited with code {proc.returncode}")
+
+    time.sleep(5)
+    after = set(glob_module.glob(os.path.join(RESULTS_DIR, "*.json")))
+    new_files = after - before
+
+    if not new_files:
+        print(f"  [ERROR] No new result file for {label}")
+        return {
+            "recall": None, "qps": None,
+            "p99_latency": None, "conc_qps": None,
+            "conc_p99_latency": None, "load_duration": None,
+        }
+
+    result_file = max(new_files, key=os.path.getmtime)
+    print(f"  [FILE] {os.path.basename(result_file)}")
+
+    with open(result_file) as f:
+        data = json.load(f)
+
+    metrics  = data["results"][0]["metrics"]
+    recall   = metrics.get("recall")
+    qps      = metrics.get("qps")
+    p99      = metrics.get("serial_latency_p99")
+    load_dur = metrics.get("load_duration")
+
+    conc_qps_list = metrics.get("conc_qps_list", [])
+    conc_p99_list = metrics.get("conc_latency_p99_list", [])
+    conc_qps = conc_qps_list[0] if conc_qps_list else None
+    conc_p99 = conc_p99_list[0] if conc_p99_list else None
+
+    print(f"  [METRICS] recall={recall}, serial_qps={qps}, serial_p99={p99}, "
+          f"conc_qps={conc_qps}, conc_p99={conc_p99}, load_duration={load_dur}")
+    return {
+        "recall": recall, "qps": qps, "p99_latency": p99,
+        "conc_qps": conc_qps, "conc_p99_latency": conc_p99,
+        "load_duration": load_dur,
+    }
+
+
+def run_best_of_three(concurrency: int) -> dict:
+    """Run the benchmark three times and return the result with the highest QPS."""
+    results = []
+    for attempt in range(1, 4):
+        print(f"\n  [ATTEMPT {attempt}/3] concurrency={concurrency}")
+        result = run_vectordbbench(concurrency)
+        results.append(result)
+        if attempt < 3:
+            print(f"\n  [WAIT] 10s before next attempt ...")
+            time.sleep(50)
+
+    best = max(results, key=lambda r: r.get("qps") or 0)
+    best_attempt = results.index(best) + 1
+    print(f"  [BEST] Attempt {best_attempt} wins: qps={best.get('qps')}")
+    return best
+
+
+# ============================================================
+# EXCEL WRITER
+# ============================================================
+
+def write_excel(rows: list, output_path: str):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Concurrency Bench Vespa"
+
+    thin   = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left   = Alignment(horizontal="left",   vertical="center")
+
+    HDR_BG   = "1B4F72"
+    HDR_FONT = Font(bold=True, color="FFFFFF")
+    ROW_ODD  = "EBF5FB"
+    ROW_EVEN = "FFFFFF"
+
+    DATASET_NAME = "1M Cohere"
+
+    columns = [
+        ("Dataset",                  20),
+        ("Quantization",             14),
+        ("ef_con",                   10),
+        ("ef_search",                11),
+        ("top-k",                     8),
+        ("Concurrency",              14),
+        ("Space Type",               12),
+        ("Database",                 12),
+        ("Recall",                   10),
+        ("Serial QPS",               12),
+        ("Serial Latency (p99) sec", 24),
+        ("Conc QPS",                 12),
+        ("Conc Latency (p99) sec",   22),
+        ("Load Duration",            16),
+    ]
+
+    NUM_COLS = len(columns)
+
+    for col_idx, (_, width) in enumerate(columns, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
+
+    current_row = 1
+
+    # Title row
+    title_cell = ws.cell(
+        row=current_row, column=1,
+        value=f"Vespa Concurrency Benchmark — Performance768D1M — {QUANTIZATION} — top-k={TOP_K} (best of 4 runs)"
+    )
+    title_cell.font      = Font(bold=True, size=12)
+    title_cell.alignment = left
+    ws.merge_cells(start_row=current_row, start_column=1,
+                   end_row=current_row,   end_column=NUM_COLS)
+    ws.row_dimensions[current_row].height = 22
+    current_row += 1
+
+    # Header row
+    ws.row_dimensions[current_row].height = 28
+    for col_idx, (header, _) in enumerate(columns, start=1):
+        c = ws.cell(row=current_row, column=col_idx, value=header)
+        c.font      = HDR_FONT
+        c.fill      = PatternFill("solid", fgColor=HDR_BG)
+        c.alignment = center
+        c.border    = border
+    current_row += 1
+
+    # Data rows
+    for row_local_idx, r in enumerate(rows):
+        ws.row_dimensions[current_row].height = 22
+        bg = ROW_ODD if row_local_idx % 2 == 0 else ROW_EVEN
+        rf = PatternFill("solid", fgColor=bg)
+
+        recall   = r.get("recall")
+        qps      = r.get("qps")
+        p99      = r.get("p99_latency")
+        conc_qps = r.get("conc_qps")
+        conc_p99 = r.get("conc_p99_latency")
+        load_dur = r.get("load_duration")
+
+        values = [
+            DATASET_NAME,
+            QUANTIZATION,
+            EF_CON,
+            EF_SEARCH,
+            TOP_K,
+            r["concurrency"],
+            SPACE_TYPE,
+            DATABASE,
+            round(recall * 100, 2)  if recall   is not None else "N/A",
+            round(qps, 4)           if qps       is not None else "N/A",
+            round(p99, 6)           if p99       is not None else "N/A",
+            round(conc_qps, 4)      if conc_qps  is not None else "N/A",
+            round(conc_p99, 6)      if conc_p99  is not None else "N/A",
+            round(load_dur, 4)      if load_dur  is not None else "N/A",
+        ]
+
+        for col_idx, val in enumerate(values, start=1):
+            c = ws.cell(row=current_row, column=col_idx, value=val)
+            c.fill      = rf
+            c.alignment = center if col_idx != 1 else left
+            c.border    = border
+
+        current_row += 1
+
+    wb.save(output_path)
+    print(f"\n[EXCEL] Saved → {output_path}")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+    print("=" * 60)
+    print("Vespa Concurrency Benchmark (best of 3 runs per concurrency)")
+    print(f"URI          : {URI}:{PORT}")
+    print(f"Quantization : {QUANTIZATION}")
+    print(f"Top-K        : {TOP_K}")
+    print(f"Concurrency  : {CONCURRENCY_VALUES}")
+    print(f"Output       : {OUTPUT_EXCEL}")
+    print("=" * 60)
+
+    rows = []
+
+    for concurrency in CONCURRENCY_VALUES:
+        metrics = run_best_of_three(concurrency)
+        rows.append({
+            "concurrency": concurrency,
+            **metrics,
+        })
+
+        print(f"\n  [WAIT] 10s before next concurrency ...")
+        time.sleep(50)
+
+    write_excel(rows, OUTPUT_EXCEL)
+
+
+if __name__ == "__main__":
+    main()

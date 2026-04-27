@@ -6,7 +6,7 @@ from ..api import DBCaseConfig, DBConfig, MetricType
 
 VespaMetric: TypeAlias = Literal["euclidean", "angular", "dotproduct", "prenormalized-angular", "hamming", "geodegrees"]
 
-VespaQuantizationType: TypeAlias = Literal["none", "binary"]
+VespaQuantizationType: TypeAlias = Literal["none", "binary", "bfloat16", "int8"]
 
 
 class VespaConfig(DBConfig):

@@ -19,7 +19,7 @@ class Vespa(VectorDB):
         dim: int,
         db_config: dict[str, str],
         db_case_config: VespaHNSWConfig | None = None,
-        collection_name: str = "VectorDBBenchCollection",
+        collection_name: str = "VectorDBBenchCollection10M_bfloat16_try2",
         drop_old: bool = False,
         **kwargs,
     ) -> None:
@@ -80,6 +80,9 @@ class Vespa(VectorDB):
         """
         assert self.client is not None
 
+        if self.case_config.quantization_type == "int8":
+            embeddings = [[float(v * 127) for v in e] for e in embeddings]
+
         data = ({"id": str(i), "fields": {"id": i, "embedding": e}} for i, e in zip(metadata, embeddings, strict=True))
         self.client.feed_iterable(data, self.schema_name)
         return len(embeddings), None
@@ -104,7 +107,7 @@ class Vespa(VectorDB):
 
         ef = self.case_config.ef
         extra_ef = max(0, ef - k)
-        embedding_field = "embedding" if self.case_config.quantization_type == "none" else "embedding_binary"
+        embedding_field = "embedding_binary" if self.case_config.quantization_type == "binary" else "embedding"
 
         yql = (
             f"select id from {self.schema_name} where "
@@ -116,11 +119,23 @@ class Vespa(VectorDB):
             id_filter = filters.get("id")
             yql += f" and id >= {id_filter}"
 
-        query_embedding = query if self.case_config.quantization_type == "none" else util.binarize_tensor(query)
+        if self.case_config.quantization_type == "binary":
+            query_embedding = util.binarize_tensor(query)
+        elif self.case_config.quantization_type == "int8":
+            query_embedding = [float(v * 127) for v in query]
+        else:
+            query_embedding = query
 
         ranking = self.case_config.quantization_type
 
-        result = self.client.query({"yql": yql, "input.query(query_embedding)": query_embedding, "ranking": ranking})
+        # result = self.client.query({"yql": yql, "input.query(query_embedding)": query_embedding, "ranking": ranking})
+        # return [child["fields"]["id"] for child in result.get_json()["root"]["children"]]
+        result = self.client.query({
+            "yql": yql, 
+            "hits": k,
+            "input.query(query_embedding)": query_embedding, 
+            "ranking": ranking
+        })
         return [child["fields"]["id"] for child in result.get_json()["root"]["children"]]
 
     def optimize(self, data_size: int | None = None):
@@ -145,11 +160,21 @@ class Vespa(VectorDB):
             ApplicationPackage,
             Document,
             Field,
+            QueryField,
+            QueryProfile,
             RankProfile,
             Schema,
             Validation,
             ValidationID,
         )
+
+        _tensor_type_map = {
+            "none":    "float",
+            "binary":  "float",  # binary keeps float input; binarize pipeline handles conversion
+            "bfloat16": "bfloat16",
+            "int8":    "int8",
+        }
+        tensor_type = _tensor_type_map[self.case_config.quantization_type]
 
         fields = [
             Field(
@@ -159,7 +184,7 @@ class Vespa(VectorDB):
             ),
             Field(
                 "embedding",
-                f"tensor<float>(x[{self.dim}])",
+                f"tensor<{tensor_type}>(x[{self.dim}])",
                 indexing=["summary", "attribute", "index"],
                 ann=HNSW(**self.case_config.index_param()),
             ),
@@ -208,9 +233,24 @@ class Vespa(VectorDB):
                             inherits="default",
                             inputs=[("query(query_embedding)", f"tensor<int8>(x[{math.ceil(self.dim / 8)}])")],
                         ),
+                        RankProfile(
+                            name="bfloat16",
+                            first_phase="",
+                            inherits="default",
+                            inputs=[("query(query_embedding)", f"tensor<bfloat16>(x[{self.dim}])")],
+                        ),
+                        RankProfile(
+                            name="int8",
+                            first_phase="closeness(field, embedding)",
+                            inherits="default",
+                            inputs=[("query(query_embedding)", f"tensor<int8>(x[{self.dim}])")],
+                        ),
                     ],
                 )
             ],
+            query_profile=QueryProfile(
+                fields=[QueryField(name="maxHits", value=10000)]
+            ),
             validations=[
                 Validation(ValidationID.tensorTypeChange, until=tomorrow),
                 Validation(ValidationID.fieldTypeChange, until=tomorrow),

@@ -23,7 +23,7 @@ class VespaTypedDict(CommonTypedDict, HNSWFlavor1):
         click.option("--port", "-p", type=int, help="connection port", default=8080),
     ]
     quantization: Annotated[
-        str, click.option("--quantization", type=click.Choice(["none", "binary"], case_sensitive=False), default="none")
+        str, click.option("--quantization", type=click.Choice(["none", "binary", "bfloat16", "int8"], case_sensitive=False), default="none")
     ]
 
 
