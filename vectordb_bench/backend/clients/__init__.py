@@ -57,6 +57,7 @@ class DB(Enum):
     Doris = "Doris"
     TurboPuffer = "TurboPuffer"
     Endee = "Endee"
+    VertexAIMatchingEngine = "VertexAIMatchingEngine"
 
     @property
     def init_cls(self) -> type[VectorDB]:  # noqa: PLR0911, PLR0912, C901, PLR0915
@@ -233,6 +234,11 @@ class DB(Enum):
             from .endee.endee import Endee
 
             return Endee
+
+        if self == DB.VertexAIMatchingEngine:
+            from .vertex_ai_matching_engine.vertex_ai_matching_engine import VertexAIMatchingEngine
+
+            return VertexAIMatchingEngine
 
         msg = f"Unknown DB: {self.name}"
         raise ValueError(msg)
@@ -413,6 +419,11 @@ class DB(Enum):
 
             return EndeeConfig
 
+        if self == DB.VertexAIMatchingEngine:
+            from .vertex_ai_matching_engine.config import VertexAIMatchingEngineConfig
+
+            return VertexAIMatchingEngineConfig
+
         msg = f"Unknown DB: {self.name}"
         raise ValueError(msg)
 
@@ -561,6 +572,11 @@ class DB(Enum):
             from .turbopuffer.config import TurboPufferIndexConfig
 
             return TurboPufferIndexConfig
+
+        if self == DB.VertexAIMatchingEngine:
+            from .vertex_ai_matching_engine.config import VertexAIMatchingEngineIndexConfig
+
+            return VertexAIMatchingEngineIndexConfig
 
         # DB.Pinecone, DB.Chroma, DB.Redis
         return EmptyDBCaseConfig

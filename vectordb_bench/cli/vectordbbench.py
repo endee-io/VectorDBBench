@@ -31,6 +31,7 @@ from ..backend.clients.test.cli import Test
 from ..backend.clients.tidb.cli import TiDB
 from ..backend.clients.turbopuffer.cli import TurboPuffer
 from ..backend.clients.vespa.cli import Vespa
+from ..backend.clients.vertex_ai_matching_engine.cli import VertexAIMatchingEngine
 from ..backend.clients.weaviate_cloud.cli import Weaviate
 from ..backend.clients.zilliz_cloud.cli import ZillizAutoIndex
 from .batch_cli import BatchCli
@@ -72,6 +73,7 @@ cli.add_command(AliSQLHNSW)
 cli.add_command(Doris)
 cli.add_command(TurboPuffer)
 cli.add_command(Endee)
+cli.add_command(VertexAIMatchingEngine)
 
 
 if __name__ == "__main__":

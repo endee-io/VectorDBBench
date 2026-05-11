@@ -77,6 +77,8 @@ all = [
     "mysql-connector-python",
     "turbopuffer[fast]",
     "endee",
+    "google-cloud-aiplatform",
+    "google-cloud-storage",
 ]
 
 qdrant          = [ "qdrant-client" ]
@@ -106,6 +108,7 @@ alisql          = [ "mysql-connector-python" ]
 doris           = [ "doris-vector-search" ]
 turbopuffer     = [ "turbopuffer" ]
 endee           = [ "endee" ]
+vertex_ai       = [ "google-cloud-aiplatform", "google-cloud-storage" ]
 
 [project.urls]
 "repository" = "https://github.com/zilliztech/VectorDBBench"
