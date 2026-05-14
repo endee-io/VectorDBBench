@@ -4,6 +4,7 @@ from ..backend.clients.aws_opensearch.cli import AWSOpenSearch
 from ..backend.clients.chroma.cli import Chroma
 from ..backend.clients.clickhouse.cli import Clickhouse
 from ..backend.clients.cockroachdb.cli import CockroachDB as CockroachDBCli
+from ..backend.clients.cosmos.cli import CosmosDB
 from ..backend.clients.doris.cli import Doris
 from ..backend.clients.elastic_cloud.cli import (
     ElasticCloudHNSW,
@@ -97,6 +98,7 @@ cli.add_command(PolarDBHNSWFlat)
 cli.add_command(PolarDBHNSWPQ)
 cli.add_command(PolarDBHNSWSQ)
 cli.add_command(SeekDBHNSW)
+cli.add_command(CosmosDB)
 
 
 if __name__ == "__main__":
