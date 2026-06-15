@@ -5,15 +5,17 @@ from vectordb_bench.backend.clients.api import DBConfig
 
 class EndeeConfig(DBConfig):
     token: SecretStr | None = None
-    region: str | None = ""
-    base_url: str = "http://127.0.0.1:8080/api/v1"
+    region: str | None = None
+    base_url: str = "http://127.0.0.1:8080/api/v2"
     space_type: str = "cosine"
-    precision: str = "int8d"
-    version: int | None = 1
+    precision: str = "int8"
+    version: str | None = None
     m: int | None = 16
     ef_con: int | None = 128
     ef_search: int | None = 128
-    index_name: str
+    collection_name: str
+    prefilter_cardinality_threshold: int | None = 10000
+    filter_boost_percentage: int | None = 0
 
     def to_dict(self) -> dict:
         return {
@@ -26,5 +28,7 @@ class EndeeConfig(DBConfig):
             "m": self.m,
             "ef_con": self.ef_con,
             "ef_search": self.ef_search,
-            "index_name": self.index_name,
+            "collection_name": self.collection_name,
+            "prefilter_cardinality_threshold": self.prefilter_cardinality_threshold,
+            "filter_boost_percentage": self.filter_boost_percentage,
         }
