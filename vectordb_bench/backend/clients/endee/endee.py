@@ -186,7 +186,7 @@ class Endee(VectorDB):
                 obj = {
                     "id": str(metadata[i]),
                     "meta": {"id": metadata[i]},
-                    # "filter": {self._scalar_id_field: metadata[i]},
+                    "filter": {self._scalar_id_field: metadata[i]},
                     "fields": {_VECTOR_FIELD_NAME: embeddings[i]},
                 }
 
