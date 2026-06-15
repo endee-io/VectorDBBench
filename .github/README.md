@@ -13,6 +13,7 @@ This guide provides step-by-step instructions to set up VectorDBBench and run pe
   - [Filter Performance Tests (Int and Label Filtering)](#filter-performance-tests-int-and-label-filtering)
 - [Parameter Breakdown Dictionary](#parameter-breakdown-dictionary)
 - [Available Datasets](#available-datasets)
+- [Custom Datasets](#custom-datasets)
 - [Tracking Progress and Viewing Results](#tracking-progress-and-viewing-results)
 - [Modifying the Endee Client Integration](#modifying-the-endee-client-integration)
 - [Infrastructure and Hardware Optimization](#infrastructure-and-hardware-optimization)
@@ -56,7 +57,9 @@ Key additions in this branch include:
    Scripts to test the long-term stability of the database. These automate aggressive insertion and deletion loops (by specifying vector counts or percentages) immediately followed by benchmarking to measure performance degradation over time.
 6. **`run_scripts/` (Ready-to-Use Benchmark Scripts)**
    A set of pre-configured bash scripts for every standard dataset size — `run_50K.sh`, `run_500K.sh`, `run_1M.sh`, `run_5M.sh`, `run_10M.sh`, and `run_100M.sh`. Each script includes both a full load+search command and a commented-out search-only variant. Simply fill in your token, base URL, and collection name, then run the appropriate script for your dataset size.
-7. **Resumable Benchmarks (Checkpoint Support)**
+7. **`custom_dataset/` (Custom Dataset Utilities)**
+   A set of scripts and a detailed README for preparing and benchmarking your own vector data — for example, slicing an existing dataset down to a custom dimension (e.g., 768D → 512D) or packaging any parquet file into the exact three-file format (`train.parquet`, `test.parquet`, `neighbors.parquet`) that VectorDBBench requires. Includes FAISS-powered ground truth calculation and a dedicated `--case-type PerformanceCustomDataset` CLI flag for running benchmarks against the generated dataset.
+8. **Resumable Benchmarks (Checkpoint Support)**
    The official VectorDBBench tool does not support resuming a crashed or interrupted benchmark. In this branch, two core files have been modified to enable this:
    - **`concurrent_runner.py`** saves insertion progress to an `insert_checkpoint_<collection-name>.json` file after every batch. If the load process is interrupted, simply re-run the same CLI command and it will resume from the last saved point — skipping already-inserted vectors and continuing without dropping the existing collection. The checkpoint file is deleted automatically once all vectors are successfully loaded.
    - **`task_runner.py`** has been updated so that if a checkpoint file exists for a collection, the `--drop-old` flag is automatically overridden — preventing the existing collection from being wiped and ensuring the resume works correctly even when `--drop-old` is passed in the command.
@@ -425,6 +428,92 @@ When setting the `--case-type` parameter, the benchmark tool automatically downl
 | **`Performance768D100M`** | LAION (Large) | 768 | 100,000,000 | ~250 GB |
 
 > **NOTE:** Make sure your `DATASET_LOCAL_DIR` has enough storage space to accommodate the dataset size before running the benchmark.
+
+---
+
+## Custom Datasets
+
+If the standard Cohere/OpenAI/LAION datasets don't match your use case — for example, you want to benchmark a specific vector dimension, use proprietary data, or test with a smaller/larger dataset than what is publicly available — you can prepare your own dataset and run it using the `--case-type PerformanceCustomDataset` flag.
+
+All utilities for this are in the `custom_dataset/` folder, which also contains its own detailed `README.md`.
+
+### Dataset Format
+
+VectorDBBench expects three parquet files inside a nested directory:
+
+```text
+custom_dataset_name/
+└── custom_dataset_dir/
+    ├── train.parquet       # base vectors (id, emb columns)
+    ├── test.parquet        # query vectors (id, emb columns)
+    └── neighbors.parquet   # ground truth (id, neighbors_id columns)
+```
+
+### Generation Scripts
+
+| Script | Use Case |
+| --- | --- |
+| `generate_single_file_dataset.py` | Single training file, medium datasets (e.g., 500K–1M vectors) |
+| `generate_chunked_dataset.py` | Multiple chunk files that need to be merged (e.g., 10M across 10 files) |
+| `10m_dataset_vector_count.py` | Quick inspection utility — prints row count and schema without loading data |
+
+Each generation script takes an existing parquet source (e.g., a downloaded Cohere or OpenAI dataset), slices vectors to your target dimension, renames and formats the files correctly, and computes exact ground truth nearest neighbors using FAISS with memory-safe chunked processing.
+
+**How to use:**
+1. Open the script matching your dataset size.
+2. Edit `SOURCE_DIR`, `DEST_DIR`, and `TARGET_DIM` at the top.
+3. Run: `python3 custom_dataset/<script_name>.py`
+
+### Example Benchmark Command
+
+```bash
+NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/admin/vectordataset" \
+vectordbbench endee \
+  --token "YOUR_TOKEN" \
+  --region location \
+  --base-url "http://localhost:8080/api/v2" \
+  --collection-name "custom_512d_10m" \
+  --task-label "custom_512d_10m" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --case-type PerformanceCustomDataset \
+  --custom-case-name "Custom 512D 10M" \
+  --custom-dataset-name custom_512d_10m \
+  --custom-dataset-dir custom_512d_10m \
+  --custom-dataset-size 10000000 \
+  --custom-dataset-dim 512 \
+  --custom-dataset-metric-type COSINE \
+  --custom-case-load-timeout 360000 \
+  --custom-case-optimize-timeout 360000 \
+  --custom-dataset-file-count 1 \
+  --custom-dataset-with-gt \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+```
+
+### Custom Dataset Parameters
+
+| Parameter | Description |
+| --- | --- |
+| `--custom-dataset-name` | Top-level folder name for the dataset (must match the directory name under `DATASET_LOCAL_DIR`) |
+| `--custom-dataset-dir` | Nested subdirectory name (VectorDBBench uses a `name/dir/` double-folder convention) |
+| `--custom-dataset-size` | Total number of vectors in `train.parquet` |
+| `--custom-dataset-dim` | Vector dimension |
+| `--custom-dataset-metric-type` | Distance metric: `COSINE`, `L2`, or `IP` |
+| `--custom-dataset-file-count` | Number of training files (1 for a single merged file) |
+| `--custom-dataset-with-gt` | Enable ground truth evaluation using `neighbors.parquet` (required for Recall calculation) |
+| `--custom-case-name` | Display name shown in benchmark results |
+| `--custom-case-load-timeout` | Timeout in seconds for the data loading phase |
+| `--custom-case-optimize-timeout` | Timeout in seconds for the post-load optimization phase |
 
 ---
 
