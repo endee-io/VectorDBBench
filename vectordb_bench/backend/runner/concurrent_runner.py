@@ -9,8 +9,10 @@ falls back to single-worker mode.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 import multiprocessing as mp
+import os
 import threading
 import time
 from enum import StrEnum
@@ -89,6 +91,11 @@ class ConcurrentInsertRunner:
             "Non-thread-safe DBs must use max_workers=1 — "
             "_get_thread_db() relies on this to avoid concurrent access to self.db"
         )
+
+        # Checkpoint: unique file per collection so parallel runs don't collide
+        collection_name = getattr(db, "collection_name", "unknown_index")
+        self._checkpoint_path = ConcurrentInsertRunner.checkpoint_path_for(collection_name)
+        log.info(f"Checkpoint path: {self._checkpoint_path}")
 
     def __getstate__(self):
         """Exclude unpicklable thread-local state for ProcessPoolExecutor(spawn)."""
@@ -203,6 +210,41 @@ class ConcurrentInsertRunner:
 
         return all_embeddings, all_metadata, labels_data, tenant_labels_data
 
+    @staticmethod
+    def checkpoint_path_for(collection_name: str) -> str:
+        safe_name = "".join(c for c in collection_name if c.isalnum() or c in ("_", "-"))
+        _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        return os.path.join(_root, f"insert_checkpoint_{safe_name}.json")
+
+    @staticmethod
+    def has_checkpoint_for(collection_name: str) -> bool:
+        return os.path.exists(ConcurrentInsertRunner.checkpoint_path_for(collection_name))
+
+    def _save_checkpoint(self, count: int) -> None:
+        try:
+            with open(self._checkpoint_path, "w") as f:
+                json.dump({"last_index": count}, f)
+        except Exception as e:
+            log.warning(f"Failed to save checkpoint: {e}")
+
+    def _load_checkpoint(self) -> int:
+        if os.path.exists(self._checkpoint_path):
+            try:
+                with open(self._checkpoint_path) as f:
+                    data = json.load(f)
+                    return data.get("last_index", 0)
+            except Exception as e:
+                log.warning(f"Failed to read checkpoint: {e}")
+        return 0
+
+    def _clear_checkpoint(self) -> None:
+        if os.path.exists(self._checkpoint_path):
+            try:
+                os.remove(self._checkpoint_path)
+                log.info(f"Cleared checkpoint: {self._checkpoint_path}")
+            except Exception as e:
+                log.warning(f"Failed to clear checkpoint: {e}")
+
     def _worker_loop(self) -> int:
         """Worker loop: pull batches from the shared iterator and insert them."""
         total = 0
@@ -212,7 +254,12 @@ class ConcurrentInsertRunner:
                 if batch is None:
                     break
                 embeddings, metadata, labels_data, tenant_labels_data = batch
-                total += self._worker_insert(embeddings, metadata, labels_data, tenant_labels_data)
+                count = self._worker_insert(embeddings, metadata, labels_data, tenant_labels_data)
+                total += count
+                # Atomically update shared total and persist checkpoint
+                with self._checkpoint_lock:
+                    self._total_inserted += count
+                    self._save_checkpoint(self._last_index + self._total_inserted)
         except Exception:
             stop_event = getattr(self, "_stop_event", None)
             if stop_event is not None:
@@ -222,11 +269,34 @@ class ConcurrentInsertRunner:
 
     def task(self) -> int:
         """Insert entire dataset using concurrent executor. Runs in subprocess."""
-        count = 0
+        # Resume support: load how many vectors were already inserted
+        last_index = self._load_checkpoint()
+        if last_index > 0:
+            log.info(f"({mp.current_process().name:16}) Resuming from checkpoint: {last_index} vectors already inserted")
+
+        self._last_index = last_index
+        self._total_inserted = 0
+        self._checkpoint_lock = threading.Lock()
         self._iter_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._deadline = None if self.duration is None else time.perf_counter() + self.duration
         self._dataset_iter = self.dataset.iter_batches(self.batch_size)
+
+        # Skip batches already covered by the checkpoint (single-threaded, before workers start)
+        if last_index > 0:
+            skipped = 0
+            while skipped < last_index:
+                try:
+                    data_df = next(self._dataset_iter)
+                except StopIteration:
+                    log.warning("Dataset exhausted while skipping to checkpoint — checkpoint may exceed dataset size")
+                    self._clear_checkpoint()
+                    return last_index
+                batch_size = len(data_df)
+                skipped += batch_size
+                if skipped % 100_000 < batch_size:
+                    log.debug(f"Skipping batches to resume, skipped={skipped}/{last_index}")
+            log.info(f"({mp.current_process().name:16}) Skipped {skipped} vectors to resume from checkpoint")
 
         with self.db.init():
             log.info(
@@ -248,13 +318,16 @@ class ConcurrentInsertRunner:
                     log.warning(f"Batch insert error: {err}")
                 raise errors[0]
 
-            count = sum(r.value for r in batch_results)
+            count_new = sum(r.value for r in batch_results)
+            total = last_index + count_new
 
             log.info(
                 f"({mp.current_process().name:16}) Finish concurrent insert, "
-                f"count={count}, dur={time.perf_counter() - start:.2f}s"
+                f"new={count_new}, total={total}, dur={time.perf_counter() - start:.2f}s"
             )
-        return count
+
+        self._clear_checkpoint()
+        return total
 
     @time_it
     def _insert_all_batches(self) -> int:

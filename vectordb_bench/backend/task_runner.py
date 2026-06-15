@@ -178,6 +178,13 @@ class CaseRunner(BaseModel):
         if "collection_name" in db_config_dict and not collection_name:
             collection_name = db_config_dict.pop("collection_name")
 
+        # If a checkpoint file exists for this collection, skip the drop so we can resume
+        if drop_old and collection_name and ConcurrentInsertRunner.has_checkpoint_for(collection_name):
+            log.info(
+                f"Checkpoint found for collection '{collection_name}' — skipping drop to resume insertion"
+            )
+            drop_old = False
+
         extra_db_kwargs = {}
         if collection_name:
             extra_db_kwargs["collection_name"] = collection_name
