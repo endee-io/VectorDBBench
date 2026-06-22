@@ -4,7 +4,6 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 
 from endee import endee
-from endee.schema import CollectionFieldConfig, CollectionFieldParams
 
 from vectordb_bench.backend.filter import Filter, FilterOp
 
@@ -90,21 +89,24 @@ class Endee(VectorDB):
 
     def _create_collection(self, dim: int):
         try:
+            params: dict = {
+                "dimension":  dim,
+                "space_type": self.space_type,
+            }
+            if self.precision is not None:
+                params["precision"] = self.precision
+            if self.M is not None:
+                params["M"] = self.M
+            if self.ef_con is not None:
+                params["ef_con"] = self.ef_con
+
             resp = self.nd.create_collection(
                 name=self.collection_name,
-                fields=[
-                    CollectionFieldConfig(
-                        name=_VECTOR_FIELD_NAME,
-                        type="vector",
-                        params=CollectionFieldParams(
-                            dimension=dim,
-                            space_type=self.space_type,
-                            precision=self.precision,
-                            m=self.M,
-                            ef_construct=self.ef_con,
-                        ),
-                    )
-                ],
+                fields=[{
+                    "name":   _VECTOR_FIELD_NAME,
+                    "type":   "vector",
+                    "params": params,
+                }],
             )
             log.info(f"Created new Endee collection: {resp}")
         except Exception:
@@ -219,7 +221,6 @@ class Endee(VectorDB):
                 "fields": {_VECTOR_FIELD_NAME: query},
                 "limit": k,
                 "filter": self.filter_expr,
-                "include_vectors": False,
             }
             if self.ef_search is not None:
                 search_kwargs["ef_search"] = self.ef_search
