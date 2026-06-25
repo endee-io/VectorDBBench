@@ -218,15 +218,16 @@ class Endee(VectorDB):
         """
         try:
             search_kwargs = {
-                "fields": {_VECTOR_FIELD_NAME: query},
-                "limit": k,
+                "fields": {_VECTOR_FIELD_NAME: {"query": query, "limit": k}},
                 "filter": self.filter_expr,
             }
             if self.ef_search is not None:
                 search_kwargs["ef_search"] = self.ef_search
             response = self.collection.search(**search_kwargs)
 
-            return [int(result["id"]) for result in response.get("results", [])]
+            results = response.get("results", {})
+            hits = results.get(_VECTOR_FIELD_NAME, []) if isinstance(results, dict) else results
+            return [int(hit["id"]) for hit in hits]
 
         except Exception as e:
             log.warning(f"Error querying Endee collection: {e}")
