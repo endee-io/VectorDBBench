@@ -92,6 +92,78 @@ class EndeeTypedDict(CommonTypedDict):
             show_default=True,
         ),
     ]
+    field_type: Annotated[
+        str,
+        click.option(
+            "--field-type",
+            type=click.Choice(["dense", "multi_vector"]),
+            default="dense",
+            help="Field type to use: 'dense' for a single dense vector field, 'multi_vector' for one or more multivector fields.",
+            show_default=True,
+        ),
+    ]
+    multivec_fields: Annotated[
+        tuple,
+        click.option(
+            "--multivec-fields",
+            type=str,
+            multiple=True,
+            default=("multivec",),
+            help="Multivector field name(s). Repeat to add multiple fields, e.g. --multivec-fields col1 --multivec-fields col2. Only used when --field-type=multi_vector.",
+            show_default=True,
+        ),
+    ]
+    multivec_pooling: Annotated[
+        str,
+        click.option(
+            "--multivec-pooling",
+            type=click.Choice(["mean", "max"]),
+            default="mean",
+            help="Pooling strategy for multi_vector fields.",
+            show_default=True,
+        ),
+    ]
+    rrf_k: Annotated[
+        int,
+        click.option(
+            "--rrf-k",
+            type=int,
+            default=60,
+            help="RRF rank constant k for multi-field fusion (default: 60).",
+            show_default=True,
+        ),
+    ]
+    multivec_count: Annotated[
+        int,
+        click.option(
+            "--multivec-count",
+            type=int,
+            default=1,
+            help="Number of copies of the same vector to store per object in a multi_vector field (default: 1).",
+            show_default=True,
+        ),
+    ]
+    search_field: Annotated[
+        str,
+        click.option(
+            "--search-field",
+            type=str,
+            default=None,
+            help="Query only this field and return its results directly (skips RRF). Use to measure per-field recall when multiple multivec fields exist.",
+            show_default=True,
+        ),
+    ]
+    field_weights: Annotated[
+        tuple,
+        click.option(
+            "--field-weight",
+            "field_weights",
+            type=str,
+            multiple=True,
+            default=(),
+            help="Per-field RRF weight as FIELD:WEIGHT, e.g. --field-weight col1:0.6 --field-weight col2:0.4. Weights must sum to 1.0. Omit for uniform weighting.",
+        ),
+    ]
 
 
 @click.command()
@@ -114,6 +186,19 @@ def Endee(**parameters):
 
     # Filter out None values before creating config
     params_for_nd = {k: v for k, v in parameters.items() if v is not None}
+    # click multiple=True gives a tuple; convert to list for EndeeConfig
+    if "multivec_fields" in params_for_nd:
+        params_for_nd["multivec_fields"] = list(params_for_nd["multivec_fields"])
+    # Parse --field-weight FIELD:WEIGHT pairs into a dict (or None if none given)
+    raw_weights = params_for_nd.pop("field_weights", ())
+    if raw_weights:
+        params_for_nd["field_weights"] = {
+            part[0]: float(part[1])
+            for entry in raw_weights
+            for part in [entry.split(":", 1)]
+        }
+    else:
+        params_for_nd.pop("field_weights", None)
     db_config = EndeeConfig(**params_for_nd)
 
     custom_case_config = get_custom_case_config(parameters)

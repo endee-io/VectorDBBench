@@ -3,7 +3,7 @@ import uuid
 from collections.abc import Iterable
 from contextlib import contextmanager
 
-from endee import endee
+from endee import endee, rerank
 
 from vectordb_bench.backend.filter import Filter, FilterOp
 
@@ -13,6 +13,7 @@ from .config import EndeeConfig
 log = logging.getLogger(__name__)
 
 _VECTOR_FIELD_NAME = "dense"
+_DEFAULT_MULTIVEC_FIELD_NAME = "multivec"
 
 
 class Endee(VectorDB):
@@ -50,6 +51,20 @@ class Endee(VectorDB):
         self.prefilter_cardinality_threshold = db_config.get("prefilter_cardinality_threshold")
         self.filter_boost_percentage = db_config.get("filter_boost_percentage")
         self.with_scalar_labels = with_scalar_labels
+
+        # Field mode: "dense" (default) or "multi_vector".
+        # multivec_fields is a single name or list of names for multi_vector fields.
+        self.field_type = db_config.get("field_type", "dense")
+        raw_mv = db_config.get("multivec_fields", _DEFAULT_MULTIVEC_FIELD_NAME)
+        self.multivec_fields: list[str] = [raw_mv] if isinstance(raw_mv, str) else list(raw_mv)
+        self.multivec_pooling = db_config.get("multivec_pooling", "mean")
+        self.rrf_k: int = db_config.get("rrf_k", 60)
+        # field_weights: {field_name: weight} for RRF fusion; None = uniform
+        self.field_weights: dict | None = db_config.get("field_weights", None)
+        # how many copies of the same vector to store per object in a multi_vector field
+        self.multivec_count: int = db_config.get("multivec_count", 1)
+        # when set, skip RRF and return only this field's results (for per-field recall)
+        self.search_field: str | None = db_config.get("search_field", None)
 
         self.filter_expr = None
         self._scalar_id_field = "id"
@@ -100,14 +115,16 @@ class Endee(VectorDB):
             if self.ef_con is not None:
                 params["ef_con"] = self.ef_con
 
-            resp = self.nd.create_collection(
-                name=self.collection_name,
-                fields=[{
-                    "name":   _VECTOR_FIELD_NAME,
-                    "type":   "vector",
-                    "params": params,
-                }],
-            )
+            if self.field_type == "multi_vector":
+                mv_params = {**params, "pooling": self.multivec_pooling}
+                fields = [
+                    {"name": fname, "type": "multi_vector", "params": mv_params}
+                    for fname in self.multivec_fields
+                ]
+            else:
+                fields = [{"name": _VECTOR_FIELD_NAME, "type": "vector", "params": params}]
+
+            resp = self.nd.create_collection(name=self.collection_name, fields=fields)
             log.info(f"Created new Endee collection: {resp}")
         except Exception:
             log.exception("Failed to create Endee collection")
@@ -185,11 +202,17 @@ class Endee(VectorDB):
         try:
             objects = []
             for i in range(len(embeddings)):
+                if self.field_type == "multi_vector":
+                    vecs = [embeddings[i]] * self.multivec_count
+                    fields_data = {fname: vecs for fname in self.multivec_fields}
+                else:
+                    fields_data = {_VECTOR_FIELD_NAME: embeddings[i]}
+
                 obj = {
                     "id": str(metadata[i]),
                     "meta": {"id": metadata[i]},
                     "filter": {self._scalar_id_field: metadata[i]},
-                    "fields": {_VECTOR_FIELD_NAME: embeddings[i]},
+                    "fields": fields_data,
                 }
 
                 if self.with_scalar_labels and labels_data is not None:
@@ -217,16 +240,42 @@ class Endee(VectorDB):
         Perform vector search with optional filters.
         """
         try:
-            search_kwargs = {
-                "fields": {_VECTOR_FIELD_NAME: {"query": query, "limit": k}},
-                "filter": self.filter_expr,
-            }
-            if self.ef_search is not None:
-                search_kwargs["ef_search"] = self.ef_search
-            response = self.collection.search(**search_kwargs)
+            if self.field_type == "multi_vector":
+                if self.search_field is not None:
+                    # per-field recall: query only this one field
+                    search_fields = [self.search_field]
+                else:
+                    search_fields = self.multivec_fields
 
-            results = response.get("results", {})
-            hits = results.get(_VECTOR_FIELD_NAME, []) if isinstance(results, dict) else results
+                fields_data = {
+                    fname: {"query": [query], "limit": k}
+                    for fname in search_fields
+                }
+                search_kwargs: dict = {"fields": fields_data, "filter": self.filter_expr}
+                if self.ef_search is not None:
+                    search_kwargs["ef_search"] = self.ef_search
+                response = self.collection.search(**search_kwargs)
+
+                if self.search_field is not None or len(self.multivec_fields) == 1:
+                    hits = response.get("results", {}).get(search_fields[0], [])
+                else:
+                    fused = rerank(
+                        response,
+                        limit=k,
+                        field_weights=self.field_weights,
+                        rrf_k=self.rrf_k,
+                    )
+                    hits = fused.get("results", [])
+            else:
+                search_kwargs = {
+                    "fields": {_VECTOR_FIELD_NAME: {"query": query, "limit": k}},
+                    "filter": self.filter_expr,
+                }
+                if self.ef_search is not None:
+                    search_kwargs["ef_search"] = self.ef_search
+                response = self.collection.search(**search_kwargs)
+                hits = response.get("results", {}).get(_VECTOR_FIELD_NAME, [])
+
             return [int(hit["id"]) for hit in hits]
 
         except Exception as e:
