@@ -3,6 +3,8 @@ import uuid
 from collections.abc import Iterable
 from contextlib import contextmanager
 
+import numpy as np
+
 from endee import endee, rerank
 
 from vectordb_bench.backend.filter import Filter, FilterOp
@@ -192,19 +194,61 @@ class Endee(VectorDB):
         embeddings: Iterable[list[float]],
         metadata: list[int],
         labels_data: list[str] | None = None,
+        extra_fields: dict | None = None,
         **kwargs,
     ) -> tuple[int, Exception | None]:
         """
         Insert embeddings with associated metadata and labels.
+
+        extra_fields: optional mapping of field_name -> list-of-vectors extracted
+        from the dataset (e.g. {"multivec1": [...], "multivec2": [...]}).  When
+        present and all configured multivec_fields are found, each DB field gets
+        its own distinct vector from the dataset instead of a replicated copy.
         """
         assert len(embeddings) == len(metadata)
         insert_count = 0
+        # Determine whether the dataset supplies per-field vectors.
+        _use_per_field = (
+            self.field_type == "multi_vector"
+            and extra_fields is not None
+            and all(fname in extra_fields for fname in self.multivec_fields)
+        )
+        # For list-of-lists columns (single field, N vectors per doc), detect
+        # whether wrapping is needed by inspecting the first element once.
+        _per_field_is_list_of_vecs = False
+        if _use_per_field and extra_fields:
+            sample = extra_fields[self.multivec_fields[0]]
+            if sample:
+                first = sample[0]
+                # pandas reads list<list<float32>> inner elements as numpy arrays,
+                # not Python lists — so check for both.
+                _per_field_is_list_of_vecs = (
+                    isinstance(first, (list, np.ndarray))
+                    and len(first) > 0
+                    and isinstance(first[0], (list, np.ndarray))
+                )
+
         try:
             objects = []
             for i in range(len(embeddings)):
                 if self.field_type == "multi_vector":
-                    vecs = [embeddings[i]] * self.multivec_count
-                    fields_data = {fname: vecs for fname in self.multivec_fields}
+                    if _use_per_field:
+                        if _per_field_is_list_of_vecs:
+                            # Column already contains list-of-vectors per doc
+                            # (single field, multivec-count N).
+                            # Force plain float lists so the SDK's np.asarray() works —
+                            # pandas may give back PyArrow-backed objects for nested columns.
+                            fields_data = {
+                                fname: np.array(extra_fields[fname][i], dtype=np.float32).tolist()
+                                for fname in self.multivec_fields
+                            }
+                        else:
+                            # Column contains a single flat vector per doc
+                            # (separate fields, multivec-count 1).  Wrap in list.
+                            fields_data = {fname: [extra_fields[fname][i]] for fname in self.multivec_fields}
+                    else:
+                        vecs = [embeddings[i]] * self.multivec_count
+                        fields_data = {fname: vecs for fname in self.multivec_fields}
                 else:
                     fields_data = {_VECTOR_FIELD_NAME: embeddings[i]}
 
