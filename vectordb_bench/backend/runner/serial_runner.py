@@ -186,11 +186,27 @@ class SerialSearchRunner:
 
         return results
 
+    def _filter_name_component(self) -> str:
+        filter_type = self.filters.type.value
+        pct = None
+        if hasattr(self.filters, "label_percentage"):
+            pct = self.filters.label_percentage * 100
+        elif self.filters.filter_rate:
+            pct = self.filters.filter_rate * 100
+        if pct is None:
+            return filter_type
+        # unambiguous, filename-safe percentage: "0.1" -> "0p1", "1" -> "1", never collapses distinct values
+        pct_str = f"{pct:g}".replace(".", "p")
+        return f"{filter_type}_{pct_str}pct"
+
     def _result_file_path(self) -> str:
-        os.makedirs(SEARCH_RESULTS_DIR, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         db_name = _safe_name(self.db.__class__.__name__)
-        return os.path.join(SEARCH_RESULTS_DIR, f"{db_name}_{timestamp}.csv")
+        filter_component = _safe_name(self._filter_name_component())
+        run_name = f"{db_name}_{filter_component}_{timestamp}"
+        run_dir = os.path.join(SEARCH_RESULTS_DIR, run_name)
+        os.makedirs(run_dir, exist_ok=True)
+        return os.path.join(run_dir, f"{run_name}_results.csv")
 
     def search(self, args: tuple[list, list[list[int]]]) -> tuple[float, float, float, float]:
         log.info(f"{mp.current_process().name:14} start search the entire test_data to get recall and latency")
@@ -329,7 +345,9 @@ class SerialSearchRunner:
         missing_counts: list[tuple[int, int]],
         measured: bool,
     ) -> None:
-        summary_file = result_file[: -len(".csv")] + ".txt" if result_file.endswith(".csv") else result_file + ".txt"
+        result_basename = os.path.basename(result_file)
+        run_name = result_basename[: -len("_results.csv")] if result_basename.endswith("_results.csv") else "run"
+        summary_file = os.path.join(os.path.dirname(result_file), f"{run_name}_summary.txt")
         try:
             lines = [
                 "=== Run info ===",
