@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import math
 import multiprocessing as mp
+import os
 import random
 import time
 import traceback
@@ -22,6 +23,15 @@ NUM_PER_BATCH = config.NUM_PER_BATCH
 LOAD_MAX_TRY_COUNT = config.LOAD_MAX_TRY_COUNT
 
 log = logging.getLogger(__name__)
+
+# Repo root (3 levels up from vectordb_bench/backend/runner/), same convention
+# used by ConcurrentInsertRunner's checkpoint path.
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+SEARCH_RESULTS_DIR = os.path.join(_ROOT_DIR, "search_results")
+
+
+def _safe_name(name: str) -> str:
+    return "".join(c for c in str(name) if c.isalnum() or c in ("_", "-")) or "unknown"
 
 
 class SerialInsertRunner:
@@ -135,6 +145,7 @@ class SerialSearchRunner:
         payload_profile: PayloadProfile = PayloadProfile.IDS_ONLY,
         tenant_labels: list[str] | None = None,
         measure_recall: bool = True,
+        dump_results: bool = True,
     ):
         self.db = db
         self.k = k
@@ -142,6 +153,7 @@ class SerialSearchRunner:
         self.payload_profile = payload_profile
         self.tenant_labels = tenant_labels or []
         self.measure_recall = measure_recall
+        self.dump_results = dump_results
         if not self.db.supports_payload_profile(self.payload_profile):
             msg = f"{self.db.name} does not support payload_profile={self.payload_profile.value}"
             raise NotImplementedError(msg)
@@ -174,6 +186,12 @@ class SerialSearchRunner:
 
         return results
 
+    def _result_file_path(self) -> str:
+        os.makedirs(SEARCH_RESULTS_DIR, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        db_name = _safe_name(self.db.__class__.__name__)
+        return os.path.join(SEARCH_RESULTS_DIR, f"{db_name}_{timestamp}.csv")
+
     def search(self, args: tuple[list, list[list[int]]]) -> tuple[float, float, float, float]:
         log.info(f"{mp.current_process().name:14} start search the entire test_data to get recall and latency")
         with self.db.init():
@@ -186,32 +204,53 @@ class SerialSearchRunner:
 
             latencies, recalls, ndcgs = [], [], []
             tenant_rng = random.Random(0)
-            for idx, emb in enumerate(test_data):
-                tenant = (
-                    self.tenant_labels[tenant_rng.randrange(len(self.tenant_labels))] if self.tenant_labels else None
-                )
-                s = time.perf_counter()
-                try:
-                    results = self._get_db_search_res(emb, tenant=tenant)
-                except Exception as e:
-                    log.warning(f"VectorDB search_embedding error: {e}")
-                    raise e from None
 
-                latencies.append(time.perf_counter() - s)
+            result_file = self._result_file_path() if self.dump_results else None
+            result_fh = open(result_file, "w") if result_file else None
+            if result_fh:
+                log.info(f"Dumping per-query search results to {result_file}")
+                result_fh.write("query_id|returned_ids|ground_truth_ids|recall|ndcg\n")
 
-                if self.measure_recall and ground_truth is not None:
-                    gt = ground_truth[idx]
-                    recalls.append(calc_recall(self.k, gt[: self.k], results))
-                    ndcgs.append(calc_ndcg(gt[: self.k], results, ideal_dcg))
-                else:
-                    recalls.append(0)
-                    ndcgs.append(0)
-
-                if len(latencies) % 100 == 0:
-                    log.debug(
-                        f"({mp.current_process().name:14}) search_count={len(latencies):3}, "
-                        f"latest_latency={latencies[-1]}, latest recall={recalls[-1]}"
+            try:
+                for idx, emb in enumerate(test_data):
+                    tenant = (
+                        self.tenant_labels[tenant_rng.randrange(len(self.tenant_labels))]
+                        if self.tenant_labels
+                        else None
                     )
+                    s = time.perf_counter()
+                    try:
+                        results = self._get_db_search_res(emb, tenant=tenant)
+                    except Exception as e:
+                        log.warning(f"VectorDB search_embedding error: {e}")
+                        raise e from None
+
+                    latencies.append(time.perf_counter() - s)
+
+                    gt = ground_truth[idx] if ground_truth is not None else None
+                    if self.measure_recall and gt is not None:
+                        recall = calc_recall(self.k, gt[: self.k], results)
+                        ndcg = calc_ndcg(gt[: self.k], results, ideal_dcg)
+                        recalls.append(recall)
+                        ndcgs.append(ndcg)
+                    else:
+                        recall = ndcg = 0
+                        recalls.append(0)
+                        ndcgs.append(0)
+
+                    if result_fh:
+                        returned_ids = ",".join(map(str, results[: self.k]))
+                        gt_ids = ",".join(map(str, gt[: self.k])) if gt is not None else ""
+                        result_fh.write(f"{idx}|{returned_ids}|{gt_ids}|{recall:.4f}|{ndcg:.4f}\n")
+
+                    if len(latencies) % 100 == 0:
+                        log.debug(
+                            f"({mp.current_process().name:14}) search_count={len(latencies):3}, "
+                            f"latest_latency={latencies[-1]}, latest recall={recalls[-1]}"
+                        )
+            finally:
+                if result_fh:
+                    result_fh.close()
 
         avg_latency = round(np.mean(latencies), 4)
         avg_recall = round(np.mean(recalls), 4)
