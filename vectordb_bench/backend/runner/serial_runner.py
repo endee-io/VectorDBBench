@@ -203,6 +203,7 @@ class SerialSearchRunner:
             log.debug(f"ground truth size: {len(ground_truth) if ground_truth is not None else 0}")
 
             latencies, recalls, ndcgs = [], [], []
+            missing_counts: list[tuple[int, int]] = []  # (missing_count, query_id), only for queries with gt
             tenant_rng = random.Random(0)
 
             result_file = self._result_file_path() if self.dump_results else None
@@ -247,23 +248,23 @@ class SerialSearchRunner:
                         recalls.append(0)
                         ndcgs.append(0)
 
+                    returned = results[: self.k]
+                    if gt is not None:
+                        gt_topk = gt[: self.k]
+                        missing = [i for i in gt_topk if i not in returned]
+                        extra = [i for i in returned if i not in gt_topk]
+                        missing_counts.append((len(missing), idx))
+                    else:
+                        gt_topk = missing = extra = []
+
                     if result_fh:
                         try:
-                            returned = results[: self.k]
                             returned_ids = ",".join(map(str, returned))
-                            if gt is not None:
-                                gt_topk = gt[: self.k]
-                                gt_ids = ",".join(map(str, gt_topk))
-                                missing = [i for i in gt_topk if i not in returned]
-                                extra = [i for i in returned if i not in gt_topk]
-                                missing_ids = ",".join(map(str, missing))
-                                extra_ids = ",".join(map(str, extra))
-                                missing_count = len(missing)
-                            else:
-                                gt_ids = missing_ids = extra_ids = ""
-                                missing_count = 0
+                            gt_ids = ",".join(map(str, gt_topk))
+                            missing_ids = ",".join(map(str, missing))
+                            extra_ids = ",".join(map(str, extra))
                             result_fh.write(
-                                f"{idx}|{returned_ids}|{gt_ids}|{missing_ids}|{missing_count}|{extra_ids}|"
+                                f"{idx}|{returned_ids}|{gt_ids}|{missing_ids}|{len(missing)}|{extra_ids}|"
                                 f"{recall:.4f}|{ndcg:.4f}|{latency * 1000:.2f}\n"
                             )
                         except OSError as e:
@@ -296,7 +297,99 @@ class SerialSearchRunner:
             f"p99={p99}, "
             f"p95={p95}"
         )
+
+        if self.dump_results and result_file:
+            self._write_summary_file(
+                result_file=result_file,
+                num_queries=len(latencies),
+                avg_latency=avg_latency,
+                avg_recall=avg_recall,
+                avg_ndcg=avg_ndcg,
+                cost=cost,
+                p99=p99,
+                p95=p95,
+                recalls=recalls,
+                missing_counts=missing_counts,
+                measured=self.measure_recall and ground_truth is not None,
+            )
+
         return (avg_recall, avg_ndcg, p99, p95)
+
+    def _write_summary_file(
+        self,
+        result_file: str,
+        num_queries: int,
+        avg_latency: float,
+        avg_recall: float,
+        avg_ndcg: float,
+        cost: float,
+        p99: float,
+        p95: float,
+        recalls: list[float],
+        missing_counts: list[tuple[int, int]],
+        measured: bool,
+    ) -> None:
+        summary_file = result_file[: -len(".csv")] + ".txt" if result_file.endswith(".csv") else result_file + ".txt"
+        try:
+            lines = [
+                "=== Run info ===",
+                f"db: {self.db.__class__.__name__}",
+                f"collection: {getattr(self.db, 'collection_name', 'unknown')}",
+                f"k: {self.k}",
+                f"filter_type: {self.filters.type.value}",
+            ]
+            if hasattr(self.filters, "label_percentage"):
+                lines.append(f"label_percentage: {self.filters.label_percentage * 100:.2f}%")
+            elif self.filters.filter_rate:
+                lines.append(f"filter_rate: {self.filters.filter_rate * 100:.2f}%")
+            lines.append(f"payload_profile: {self.payload_profile.value}")
+            if self.tenant_labels:
+                lines.append(f"tenant_labels: {len(self.tenant_labels)}")
+            lines.append(f"measure_recall: {measured}")
+            lines.append(f"queries: {num_queries}")
+            lines.append(f"result_csv: {os.path.basename(result_file)}")
+
+            lines += [
+                "",
+                "=== Aggregate metrics ===",
+                f"avg_recall: {avg_recall}",
+                f"avg_ndcg: {avg_ndcg}",
+                f"avg_latency_s: {avg_latency}",
+                f"p95_latency_s: {p95}",
+                f"p99_latency_s: {p99}",
+                f"total_cost_s: {cost}",
+            ]
+
+            if measured and recalls:
+                perfect = sum(1 for r in recalls if r >= 1.0)
+                zero = sum(1 for r in recalls if r <= 0.0)
+                lines += [
+                    "",
+                    "=== Recall distribution ===",
+                    f"min_recall: {round(min(recalls), 4)}",
+                    f"max_recall: {round(max(recalls), 4)}",
+                    f"queries_with_perfect_recall: {perfect}/{num_queries}",
+                    f"queries_with_zero_recall: {zero}/{num_queries}",
+                ]
+
+            if missing_counts:
+                total_missing = sum(c for c, _ in missing_counts)
+                worst = sorted(missing_counts, reverse=True)[:10]
+                lines += [
+                    "",
+                    "=== Missing-id analysis (evidence of accuracy issues) ===",
+                    f"total_missing_ids_across_all_queries: {total_missing}",
+                    f"avg_missing_ids_per_query: {round(total_missing / len(missing_counts), 2)}",
+                    f"max_missing_ids_in_a_single_query: {worst[0][0] if worst else 0}",
+                    "worst_queries_by_missing_count (query_id: missing_count):",
+                ]
+                lines += [f"  {qid}: {cnt}" for cnt, qid in worst]
+
+            with open(summary_file, "w") as f:
+                f.write("\n".join(lines) + "\n")
+            log.info(f"Wrote run summary to {summary_file}")
+        except OSError as e:
+            log.warning(f"Failed to write summary file {summary_file}: {e}")
 
     def _run_in_subprocess(self) -> tuple[float, float, float, float]:
         with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
