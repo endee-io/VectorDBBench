@@ -206,10 +206,18 @@ class SerialSearchRunner:
             tenant_rng = random.Random(0)
 
             result_file = self._result_file_path() if self.dump_results else None
-            result_fh = open(result_file, "w") if result_file else None
-            if result_fh:
-                log.info(f"Dumping per-query search results to {result_file}")
-                result_fh.write("query_id|returned_ids|ground_truth_ids|recall|ndcg\n")
+            result_fh = None
+            if result_file:
+                try:
+                    result_fh = open(result_file, "w")
+                    log.info(f"Dumping per-query search results to {result_file}")
+                    result_fh.write(
+                        "query_id|returned_ids|ground_truth_ids|missing_ids|missing_count|extra_ids|"
+                        "recall|ndcg|latency_ms\n"
+                    )
+                except OSError as e:
+                    log.warning(f"Failed to open result dump file {result_file}, continuing without it: {e}")
+                    result_fh = None
 
             try:
                 for idx, emb in enumerate(test_data):
@@ -225,7 +233,8 @@ class SerialSearchRunner:
                         log.warning(f"VectorDB search_embedding error: {e}")
                         raise e from None
 
-                    latencies.append(time.perf_counter() - s)
+                    latency = time.perf_counter() - s
+                    latencies.append(latency)
 
                     gt = ground_truth[idx] if ground_truth is not None else None
                     if self.measure_recall and gt is not None:
@@ -239,9 +248,28 @@ class SerialSearchRunner:
                         ndcgs.append(0)
 
                     if result_fh:
-                        returned_ids = ",".join(map(str, results[: self.k]))
-                        gt_ids = ",".join(map(str, gt[: self.k])) if gt is not None else ""
-                        result_fh.write(f"{idx}|{returned_ids}|{gt_ids}|{recall:.4f}|{ndcg:.4f}\n")
+                        try:
+                            returned = results[: self.k]
+                            returned_ids = ",".join(map(str, returned))
+                            if gt is not None:
+                                gt_topk = gt[: self.k]
+                                gt_ids = ",".join(map(str, gt_topk))
+                                missing = [i for i in gt_topk if i not in returned]
+                                extra = [i for i in returned if i not in gt_topk]
+                                missing_ids = ",".join(map(str, missing))
+                                extra_ids = ",".join(map(str, extra))
+                                missing_count = len(missing)
+                            else:
+                                gt_ids = missing_ids = extra_ids = ""
+                                missing_count = 0
+                            result_fh.write(
+                                f"{idx}|{returned_ids}|{gt_ids}|{missing_ids}|{missing_count}|{extra_ids}|"
+                                f"{recall:.4f}|{ndcg:.4f}|{latency * 1000:.2f}\n"
+                            )
+                        except OSError as e:
+                            log.warning(f"Failed to write result dump row {idx}, disabling further dumps: {e}")
+                            result_fh.close()
+                            result_fh = None
 
                     if len(latencies) % 100 == 0:
                         log.debug(
