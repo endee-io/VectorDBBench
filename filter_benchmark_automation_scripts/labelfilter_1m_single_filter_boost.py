@@ -169,6 +169,7 @@ def write_excel(rows: list, output_path: str):
         ("Dataset",             22),
         ("Precision",           12),
         ("Filter Case Type",    38),
+        ("Prefilter Threshold",  16),
         ("Label Fraction",      16),
         ("Run #",                8),
         ("m",                    7),
@@ -219,7 +220,7 @@ def write_excel(rows: list, output_path: str):
         rf = PatternFill("solid", fgColor=bg)
 
         case_label = FILTER_CASE
-        case_label += f"\n(prefilter={r['prefilter'] or DEFAULT_PRECARDINALITY})"
+        prefilter_value = r['prefilter'] or DEFAULT_PRECARDINALITY
 
         recall   = r.get("recall")
         qps      = r.get("qps")
@@ -230,6 +231,7 @@ def write_excel(rows: list, output_path: str):
             DATASET_NAME,
             PRECISION,
             case_label,
+            prefilter_value,
             r["label_pct"],
             r["attempt"],
             M,

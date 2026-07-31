@@ -141,6 +141,7 @@ def write_excel(rows: list, output_path: str):
         ("Dataset",        22),
         ("Precision",      12),
         ("Filter Case",    26),
+        ("Prefilter Threshold", 16),
         ("Filter Type",    12),
         ("Filter Value",   13),
         ("Boost %",        10),
@@ -178,12 +179,11 @@ def write_excel(rows: list, output_path: str):
         rf = PatternFill("solid", fgColor=bg)
         ws.row_dimensions[current_row].height = 22
 
-        case_label = r["case_name"] + f"\n(prefilter={r['prefilter']})"
-
         values = [
             r["dataset"],
             r["precision"],
-            case_label,
+            r["case_name"],
+            r["prefilter"],
             r["filter_type"],
             r["filter_value"],
             r["boost_pct"],
