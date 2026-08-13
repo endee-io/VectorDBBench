@@ -107,7 +107,8 @@ Install the benchmarking tool along with the specific client dependencies for En
 If you are running directly from the cloned repository source (recommended for the latest changes):
 
 ```bash
-pip install -e '.[endee]'
+pip install -e .
+pip install endee
 ```
 
 > **NOTE:** Alternatively, if installing via PyPI, you would use `pip install 'vectordb-bench[endee]'`
