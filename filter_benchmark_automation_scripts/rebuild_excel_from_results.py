@@ -17,6 +17,13 @@ How matching works:
   share the same TASK_LABEL_PREFIX. Set TASK_LABEL_PREFIX below to the --task-label value
   you used (e.g. "30072026") and every file whose task_label starts with that prefix is
   included.
+
+  Caution: the uuid is generated fresh per individual vectordbbench invocation, not once
+  per script run — so TASK_LABEL_PREFIX alone can also match files from a *different*
+  session that happened to reuse the same --task-label text (e.g. a leftover hardcoded
+  default). Set RUN_DATE to the calendar date you actually ran this (matches the real
+  write-date vectordbbench stamps into the filename) to additionally scope matching to
+  that one day and avoid cross-session collisions.
 """
 
 import glob as glob_module
@@ -31,6 +38,15 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 # ============================================================
 RESULTS_DIR       = "<PATH_TO_VECTORDB_BENCH_RESULTS_DIR>/Endee"  # <-- set before running (the box where the benchmark actually ran)
 TASK_LABEL_PREFIX = "<TASK_LABEL>"               # <-- the --task-label value used in the original run
+RUN_DATE          = "<YYYYMMDD>"                 # <-- the calendar date you ran this, e.g. "20260803".
+                                                  #     vectordbbench stamps this into the filename itself
+                                                  #     (result_<RUN_DATE>_<task_label>_endee.json) using the
+                                                  #     real write date, independent of whatever text you chose
+                                                  #     for --task-label. Since --task-label defaults get reused
+                                                  #     across unrelated sessions/days, TASK_LABEL_PREFIX alone can
+                                                  #     match files from a different run that happened to use the
+                                                  #     same label text. Combining both narrows it to one specific
+                                                  #     day's files. Leave as "" to skip date filtering.
 OUTPUT_DIR        = "<PATH_TO_VECTORDB_BENCH_ROOT_DIR>"  # <-- set before running
 
 OUTPUT_EXCEL = os.path.join(OUTPUT_DIR, "rebuilt_bench_from_results.xlsx")
@@ -48,6 +64,10 @@ def load_matching_results() -> list:
 
     matched = []
     for path in files:
+        basename = os.path.basename(path)
+        if RUN_DATE and not basename.startswith(f"result_{RUN_DATE}_"):
+            continue
+
         with open(path) as f:
             data = json.load(f)
 
@@ -218,7 +238,10 @@ def write_excel(rows: list, output_path: str):
 def main():
     matched = load_matching_results()
     if not matched:
-        print(f"[ERROR] No result files under {RESULTS_DIR} with task_label starting with '{TASK_LABEL_PREFIX}'")
+        print(
+            f"[ERROR] No result files under {RESULTS_DIR} with task_label starting with "
+            f"'{TASK_LABEL_PREFIX}'" + (f" on date {RUN_DATE}" if RUN_DATE else "")
+        )
         return
 
     print(f"[INFO] Found {len(matched)} matching result(s)")

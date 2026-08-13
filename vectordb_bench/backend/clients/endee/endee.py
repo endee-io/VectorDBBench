@@ -223,6 +223,10 @@ class Endee(VectorDB):
             }
             if self.ef_search is not None:
                 search_kwargs["ef_search"] = self.ef_search
+            if self.prefilter_cardinality_threshold is not None:
+                search_kwargs["prefilter_cardinality_threshold"] = self.prefilter_cardinality_threshold
+            if self.filter_boost_percentage is not None:
+                search_kwargs["filter_boost_percentage"] = self.filter_boost_percentage
             response = self.collection.search(**search_kwargs)
 
             results = response.get("results", {})
