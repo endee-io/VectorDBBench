@@ -19,6 +19,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pyarrow as pa
 
 from vectordb_bench.backend.filter import Filter, FilterOp, non_filter
 from vectordb_bench.backend.utils import kill_proc_tree, time_it
@@ -126,6 +127,7 @@ class ConcurrentInsertRunner:
         metadata: list[int],
         labels_data: list[str] | None = None,
         tenant_labels_data: list[str] | None = None,
+        extra_fields: dict | None = None,
         retry_idx: int = 0,
     ) -> int:
         """Insert a single batch with retry logic. Returns inserted count."""
@@ -136,6 +138,8 @@ class ConcurrentInsertRunner:
         }
         if tenant_labels_data is not None:
             insert_kwargs["tenant_labels_data"] = tenant_labels_data
+        if extra_fields:
+            insert_kwargs["extra_fields"] = extra_fields
         insert_count, error = db.insert_embeddings(**insert_kwargs)
         if error is not None:
             log.warning(f"Insert failed, try_idx={retry_idx}, Exception: {error}")
@@ -151,6 +155,7 @@ class ConcurrentInsertRunner:
                     metadata,
                     labels_data,
                     tenant_labels_data,
+                    extra_fields,
                     retry_idx,
                 )
             msg = f"Insert failed and retried more than {config.MAX_INSERT_RETRY} times"
@@ -163,12 +168,13 @@ class ConcurrentInsertRunner:
         metadata: list[int],
         labels_data: list[str] | None = None,
         tenant_labels_data: list[str] | None = None,
+        extra_fields: dict | None = None,
     ) -> int:
         """Worker function: insert a batch with retry."""
         db = self._get_thread_db()
-        return self._insert_batch_with_retry(db, embeddings, metadata, labels_data, tenant_labels_data)
+        return self._insert_batch_with_retry(db, embeddings, metadata, labels_data, tenant_labels_data, extra_fields)
 
-    def _next_batch(self) -> tuple[list[list[float]], list[int], list[str] | None, list[str] | None] | None:
+    def _next_batch(self) -> tuple[list[list[float]], list[int], list[str] | None, list[str] | None, dict | None] | None:
         """Pull the next batch from the shared dataset iterator.
 
         Thread-safe: only one thread reads from the iterator at a time.
@@ -208,7 +214,29 @@ class ConcurrentInsertRunner:
         if self.tenant_case is not None and getattr(self.tenant_case, "is_multitenant", False):
             tenant_labels_data = self.tenant_case.tenant_labels_for_ids(all_metadata)
 
-        return all_embeddings, all_metadata, labels_data, tenant_labels_data
+        # Extract any extra vector columns (e.g. multivec1, multivec2) that are
+        # not the standard id/emb/labels columns so per-field multi-vector clients
+        # can use distinct vectors instead of replicating a single embedding.
+        _standard = {
+            self.dataset.data.train_id_field,
+            self.dataset.data.train_vector_field,
+            "labels",
+            "scalar_labels",
+            "tenant_labels",
+        }
+        extra_fields: dict | None = None
+        for col in data_df.columns:
+            if col not in _standard:
+                sample = data_df[col].iloc[0] if len(data_df) > 0 else None
+                if isinstance(sample, (list, np.ndarray)):
+                    if extra_fields is None:
+                        extra_fields = {}
+                    # pandas may return PyArrow-backed scalars for nested list
+                    # columns (e.g. list<list<float32>>).  Re-route through PyArrow
+                    # to_pylist() which always gives plain Python lists.
+                    extra_fields[col] = pa.Array.from_pandas(data_df[col]).to_pylist()
+
+        return all_embeddings, all_metadata, labels_data, tenant_labels_data, extra_fields
 
     @staticmethod
     def checkpoint_path_for(collection_name: str) -> str:
@@ -253,8 +281,8 @@ class ConcurrentInsertRunner:
                 batch = self._next_batch()
                 if batch is None:
                     break
-                embeddings, metadata, labels_data, tenant_labels_data = batch
-                count = self._worker_insert(embeddings, metadata, labels_data, tenant_labels_data)
+                embeddings, metadata, labels_data, tenant_labels_data, extra_fields = batch
+                count = self._worker_insert(embeddings, metadata, labels_data, tenant_labels_data, extra_fields)
                 total += count
                 # Atomically update shared total and persist checkpoint
                 with self._checkpoint_lock:

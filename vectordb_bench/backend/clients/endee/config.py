@@ -16,6 +16,13 @@ class EndeeConfig(DBConfig):
     collection_name: str
     prefilter_cardinality_threshold: int | None = 10000
     filter_boost_percentage: int | None = 0
+    field_type: str = "dense"
+    multivec_fields: list[str] = ["multivec"]
+    multivec_pooling: str = "mean"
+    rrf_k: int = 60
+    field_weights: dict | None = None
+    multivec_count: int = 1
+    search_field: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -31,4 +38,11 @@ class EndeeConfig(DBConfig):
             "collection_name": self.collection_name,
             "prefilter_cardinality_threshold": self.prefilter_cardinality_threshold,
             "filter_boost_percentage": self.filter_boost_percentage,
+            "field_type": self.field_type,
+            "multivec_fields": self.multivec_fields,
+            "multivec_pooling": self.multivec_pooling,
+            "rrf_k": self.rrf_k,
+            "field_weights": self.field_weights,
+            "multivec_count": self.multivec_count,
+            "search_field": self.search_field,
         }
