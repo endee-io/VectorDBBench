@@ -180,7 +180,7 @@ class Endee(VectorDB):
             self.filter_expr = None
 
         elif filters.type == FilterOp.NumGE:
-            self.filter_expr = [{self._scalar_id_field: {"$range": [filters.int_value, 1_000_000]}}]
+            self.filter_expr = [{self._scalar_id_field: {"$gte": filters.int_value}}]
 
         elif filters.type == FilterOp.StrEqual:
             self.filter_expr = [{self._scalar_label_field: {"$eq": filters.label_value}}]
@@ -298,6 +298,10 @@ class Endee(VectorDB):
                 search_kwargs: dict = {"fields": fields_data, "filter": self.filter_expr}
                 if self.ef_search is not None:
                     search_kwargs["ef_search"] = self.ef_search
+                if self.prefilter_cardinality_threshold is not None:
+                    search_kwargs["prefilter_cardinality_threshold"] = self.prefilter_cardinality_threshold
+                if self.filter_boost_percentage is not None:
+                    search_kwargs["filter_boost_percentage"] = self.filter_boost_percentage
                 response = self.collection.search(**search_kwargs)
 
                 if self.search_field is not None or len(self.multivec_fields) == 1:
@@ -317,6 +321,10 @@ class Endee(VectorDB):
                 }
                 if self.ef_search is not None:
                     search_kwargs["ef_search"] = self.ef_search
+                if self.prefilter_cardinality_threshold is not None:
+                    search_kwargs["prefilter_cardinality_threshold"] = self.prefilter_cardinality_threshold
+                if self.filter_boost_percentage is not None:
+                    search_kwargs["filter_boost_percentage"] = self.filter_boost_percentage
                 response = self.collection.search(**search_kwargs)
                 hits = response.get("results", {}).get(_VECTOR_FIELD_NAME, [])
 

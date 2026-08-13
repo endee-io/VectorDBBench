@@ -118,11 +118,135 @@ NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench e
   --case-type LabelFilterPerformanceCase \
   --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
   --label-percentage 0.02 \
+  --prefilter-cardinality-threshold 100000 \
+  --filter-boost-percentage 25 \
   --k 30 \
   --num-concurrency "8" \
   --concurrency-duration 30 \
   --concurrency-timeout 3600 \
   --drop-old \
   --load \
+  --search-concurrent \
+  --search-serial
+
+
+# ========================================================================
+# MULTIVECTOR: CREATING A NEW INDEX WITH A SINGLE MULTIVECTOR FIELD
+# ========================================================================
+DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
+  --token "TOKEN" \
+  --region location \
+  --base-url "http://127.0.0.1:8080/api/v2" \
+  --collection-name test_multivector_index \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --case-type Performance768D1M \
+  --field-type multi_vector \
+  --multivec-fields multivec \
+  --multivec-pooling mean \
+  --multivec-count 1 \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+
+# ========================================================================
+# MULTIVECTOR: USING THE EXISTING MULTIVECTOR INDEX
+# ========================================================================
+DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
+  --token "TOKEN" \
+  --region location \
+  --base-url "http://127.0.0.1:8080/api/v2" \
+  --collection-name test_multivector_index \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --case-type Performance768D1M \
+  --field-type multi_vector \
+  --multivec-fields multivec \
+  --multivec-pooling mean \
+  --multivec-count 1 \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
+  --search-concurrent \
+  --search-serial
+
+
+# ========================================================================
+# MULTIVECTOR: MULTIPLE MULTIVECTOR FIELDS FUSED WITH WEIGHTED RRF
+# (repeat --multivec-fields per field; --field-weight FIELD:WEIGHT must sum to 1.0)
+# ========================================================================
+DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
+  --token "TOKEN" \
+  --region location \
+  --base-url "http://127.0.0.1:8080/api/v2" \
+  --collection-name test_multivector_multifield_index \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --case-type Performance768D1M \
+  --field-type multi_vector \
+  --multivec-fields col1 \
+  --multivec-fields col2 \
+  --multivec-pooling max \
+  --multivec-count 1 \
+  --rrf-k 60 \
+  --field-weight col1:0.6 \
+  --field-weight col2:0.4 \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --drop-old \
+  --load \
+  --search-concurrent \
+  --search-serial
+
+
+# ========================================================================
+# MULTIVECTOR: PER-FIELD RECALL — QUERY ONLY ONE FIELD, SKIPPING RRF FUSION
+# ========================================================================
+DATASET_LOCAL_DIR="/home/admin/vectordataset" vectordbbench endee \
+  --token "TOKEN" \
+  --region location \
+  --base-url "http://127.0.0.1:8080/api/v2" \
+  --collection-name test_multivector_multifield_index \
+  --task-label "20260107" \
+  --m 16 \
+  --ef-con 128 \
+  --ef-search 128 \
+  --space-type cosine \
+  --precision int16 \
+  --case-type Performance768D1M \
+  --field-type multi_vector \
+  --multivec-fields col1 \
+  --multivec-fields col2 \
+  --multivec-pooling max \
+  --search-field col1 \
+  --k 30 \
+  --num-concurrency "8" \
+  --concurrency-duration 30 \
+  --concurrency-timeout 3600 \
+  --skip-drop-old \
+  --skip-load \
   --search-concurrent \
   --search-serial
