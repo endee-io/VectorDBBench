@@ -74,14 +74,7 @@ Key additions in this branch include:
 
 ### 1. Clone the Repository
 
-First, clone the official VectorDBBench repository and navigate into the folder:
-
-```bash
-git clone https://github.com/zilliztech/VectorDBBench.git
-cd VectorDBBench
-```
-
-**Note**: If using the Endee Repository (forked from VectorDBBench), which consists other scripts for stability/stress tests.
+First, clone the VectorDBBench repository and navigate into the folder:
 
 ```bash
 git clone https://github.com/endee-io/VectorDBBench.git
