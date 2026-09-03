@@ -1,6 +1,17 @@
+import logging
+
 from pydantic import BaseModel
 
-from vectordb_bench.backend.clients.api import DBCaseConfig, DBConfig
+from vectordb_bench.backend.clients.api import DBCaseConfig, DBConfig, MetricType
+
+log = logging.getLogger(__name__)
+
+# The engine's space types, keyed by the dataset metric the framework reports.
+_SPACE_TYPE_FOR_METRIC = {
+    MetricType.COSINE: "cosine",
+    MetricType.L2: "l2",
+    MetricType.IP: "ip",
+}
 
 
 class EndeeLibConfig(DBConfig):
@@ -36,6 +47,13 @@ class EndeeLibConfig(DBConfig):
 class EndeeLibIndexConfig(BaseModel, DBCaseConfig):
     """Per-case index and search settings for a dense vector field."""
 
+    # Set by Assembler.assemble from the case's dataset; every non-empty
+    # DBCaseConfig must accept it. It decides `space_type`, because the metric
+    # has to match the ground truth the recall is scored against - and because
+    # EndeeLib.need_normalize_cosine() keys off the space type, so a mismatch
+    # would leave cosine vectors un-normalized.
+    metric_type: MetricType | None = None
+
     space_type: str = "cosine"
     precision: str = "int16"
     M: int = 16
@@ -51,9 +69,33 @@ class EndeeLibIndexConfig(BaseModel, DBCaseConfig):
     prefilter_threshold: float | None = None
     boost_percentage: float | None = None
 
+    def parse_space_type(self) -> str:
+        """The engine space type for this case.
+
+        The dataset's metric wins when the framework has reported one: scoring
+        recall against cosine ground truth with an l2 index (or vice versa) only
+        produces a wrong number. An unsupported metric falls back to the
+        configured `space_type`.
+        """
+        if self.metric_type is None:
+            return self.space_type
+        derived = _SPACE_TYPE_FOR_METRIC.get(self.metric_type)
+        if derived is None:
+            log.warning(
+                f"EndeeLib: dataset metric {self.metric_type} has no engine space type; "
+                f"using --space-type {self.space_type}"
+            )
+            return self.space_type
+        if derived != self.space_type:
+            log.warning(
+                f"EndeeLib: dataset metric is {self.metric_type}, so using space_type "
+                f"{derived!r} instead of the configured {self.space_type!r}"
+            )
+        return derived
+
     def index_param(self) -> dict:
         return {
-            "space_type": self.space_type,
+            "space_type": self.parse_space_type(),
             "precision": self.precision,
             "M": self.M,
             "ef_con": self.ef_con,

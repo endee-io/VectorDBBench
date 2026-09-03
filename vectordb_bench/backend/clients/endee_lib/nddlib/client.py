@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
 from . import _ffi
+from ._env import env_bool, env_int
 from .errors import NddError, ValidationError
 from .models import (
     FieldSpec,
@@ -353,6 +354,14 @@ class Database:
     as ``<db>/<collection>``. It carries no authorization meaning in library
     mode; it partitions the collection namespace.
 
+    Every constructor argument falls back to the environment, which an
+    ``ndd.env`` file has already populated at import time (:mod:`nddlib._env`):
+    ``NDD_DATA_DIR``, ``NDD_NAMESPACE``, ``NDD_SKIP_SANITY``,
+    ``NDD_SAVE_ON_SHUTDOWN``, ``NDD_VECTOR_CACHE_MAX_BYTES`` and
+    ``NDD_NUM_PARALLEL_INSERTS``. So ``Database()`` with no arguments is a fully
+    configured database whenever that file is present. An explicit argument
+    always wins over the environment.
+
     Usable as a context manager::
 
         with nddlib.Database("./data") as db:
@@ -361,14 +370,34 @@ class Database:
 
     def __init__(
         self,
-        data_dir: str,
-        db: str = "default",
+        data_dir: Optional[str] = None,
+        db: Optional[str] = None,
         *,
-        skip_sanity: bool = False,
-        save_on_shutdown: bool = True,
-        vector_cache_max_bytes: int = 0,
-        parallel_insert_threads: int = 0,
+        skip_sanity: Optional[bool] = None,
+        save_on_shutdown: Optional[bool] = None,
+        vector_cache_max_bytes: Optional[int] = None,
+        parallel_insert_threads: Optional[int] = None,
     ) -> None:
+        # Every argument falls back to the environment, which ``ndd.env`` has
+        # already populated at import (see nddlib._env). An explicit argument
+        # always wins, so existing callers are unaffected.
+        if data_dir is None:
+            data_dir = os.environ.get("NDD_DATA_DIR")
+        if not data_dir:
+            raise ValidationError(
+                "data_dir is required: pass it, or set NDD_DATA_DIR (e.g. in ndd.env)"
+            )
+        if db is None:
+            db = os.environ.get("NDD_NAMESPACE") or "default"
+        if skip_sanity is None:
+            skip_sanity = env_bool("NDD_SKIP_SANITY", False)
+        if save_on_shutdown is None:
+            save_on_shutdown = env_bool("NDD_SAVE_ON_SHUTDOWN", True)
+        if vector_cache_max_bytes is None:
+            vector_cache_max_bytes = env_int("NDD_VECTOR_CACHE_MAX_BYTES", 0)
+        if parallel_insert_threads is None:
+            parallel_insert_threads = env_int("NDD_NUM_PARALLEL_INSERTS", 0)
+
         self.db = _check_name("db", db)
         self._shared = _acquire_handle(
             data_dir,

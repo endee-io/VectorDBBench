@@ -68,11 +68,15 @@ def find_library() -> str:
     """Locate libndd_capi.
 
     ``NDD_CAPI_PATH`` wins if set (a full path to the library, or a directory
-    holding it). Otherwise the wheel directory, then any sibling build/
-    directory, then the loader's own default paths are tried.
+    holding it), then ``NDD_CAPI_SO`` - the name the in-process ``ndd_lib``
+    package and its ``ndd.env`` use, accepted so one config file drives both.
+    Otherwise the wheel directory, then any sibling build/ directory, then the
+    loader's own default paths are tried.
     """
-    override = os.environ.get("NDD_CAPI_PATH")
-    if override:
+    for var in ("NDD_CAPI_PATH", "NDD_CAPI_SO"):
+        override = os.environ.get(var)
+        if not override:
+            continue
         path = Path(override).expanduser()
         if path.is_file():
             return str(path)
@@ -81,7 +85,7 @@ def find_library() -> str:
                 if (path / name).is_file():
                     return str(path / name)
         raise NddError(
-            f"NDD_CAPI_PATH={override!r} does not point at a libndd_capi shared library"
+            f"{var}={override!r} does not point at a libndd_capi shared library"
         )
 
     for directory in _search_dirs():
