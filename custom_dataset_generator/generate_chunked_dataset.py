@@ -5,19 +5,22 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import faiss
 from tqdm import tqdm
+import gc
 
 # --- CONFIGURATION ---
-# --- Destination Directory should contain nested directory (Format of vectordbbench, ex. custom_512d_10m/custom_512d_10m)
-SOURCE_DIR = "/home/debian/ssd/vectordataset/cohere/cohere_large_10m"
-DEST_DIR = "/home/debian/ssd/vectordataset/custom_512d_10m_single/custom_512d_10m_single"
+SOURCE_DIR = "/home/ubuntu/vectordataset/cohere/cohere_large_10m"
+DEST_DIR = "/home/ubuntu/vectordataset/custom_512d_3M/custom_512d_3M"
+
 TARGET_DIM = 512
+TARGET_ROW_COUNT = 3_000_000  # Set to None if you want all vectors (10M), else set your limit like 3_000_000
+
 TOP_K = 100
 BATCH_SIZE = 25000       # For safely writing to disk
-FAISS_CHUNK = 1000000    # Read 1M at a time for FAISS (Uses ~3GB RAM)
+FAISS_CHUNK = 100000     # Read at a time for FAISS (Uses more RAM)
 NUM_FILES = 10
 
 def slice_test_file():
-    """Slices the queries to 512D."""
+    """Slices the queries to TARGET_DIM."""
     print("\n[1] Slicing Test Queries...")
     in_path = os.path.join(SOURCE_DIR, "test.parquet")
     out_path = os.path.join(DEST_DIR, "test.parquet")
@@ -28,11 +31,16 @@ def slice_test_file():
     print(f" Saved to {out_path}")
 
 def merge_and_slice_train_files():
-    """Reads all 10 files in batches and streams them into ONE train.parquet file."""
-    print(f"\n[2] Merging 10 files into a single 10M {TARGET_DIM}D train.parquet...")
+    """Reads files in batches, streams them into ONE train.parquet file, and stops at TARGET_ROW_COUNT."""
+    print(f"\n[2] Merging files into a single {TARGET_DIM}D train.parquet...")
+    if TARGET_ROW_COUNT is not None:
+        print(f" -> Target size limit set to: {TARGET_ROW_COUNT} vectors.")
+        
     out_path = os.path.join(DEST_DIR, "train.parquet")
     
     writer = None
+    total_rows_written = 0
+    
     try:
         for i in range(NUM_FILES):
             in_path = os.path.join(SOURCE_DIR, f"shuffle_train-{i:02d}-of-10.parquet")
@@ -46,9 +54,17 @@ def merge_and_slice_train_files():
             # Stream the current file into the master writer
             for batch in tqdm(parquet_file.iter_batches(batch_size=BATCH_SIZE), 
                               total=total_batches, 
-                              desc=f"Processing Chunk {i+1}/{NUM_FILES}"):
+                              desc=f"Processing File {i+1}/{NUM_FILES}"):
                 
                 df = batch.to_pandas()
+                
+                # Check if this batch pushes us over the TARGET_ROW_COUNT limit
+                if TARGET_ROW_COUNT is not None:
+                    rows_needed = TARGET_ROW_COUNT - total_rows_written
+                    if len(df) > rows_needed:
+                        df = df.head(rows_needed) # Slice the dataframe to exactly what is needed
+                
+                # Slice dimensionality
                 df['emb'] = df['emb'].apply(lambda x: x[:TARGET_DIM] if x is not None else x)
                 table = pa.Table.from_pandas(df)
                 
@@ -57,15 +73,25 @@ def merge_and_slice_train_files():
                     writer = pq.ParquetWriter(out_path, table.schema)
                 
                 writer.write_table(table)
+                total_rows_written += len(df)
+                
+                # Stop if we have hit the configured target
+                if TARGET_ROW_COUNT is not None and total_rows_written >= TARGET_ROW_COUNT:
+                    print(f"\n Reached target row count of {TARGET_ROW_COUNT}. Stopping merge early.")
+                    return # Exits the function entirely
+
     finally:
         # Guarantee the footer is written, preventing file corruption!
         if writer is not None:
             writer.close()
-            print(f" Master file securely saved to {out_path}")
+            print(f" Master file securely saved to {out_path} with {total_rows_written} rows.")
 
 def calculate_ground_truth_from_master():
-    """Reads the master 10M file in safe chunks to calculate exact neighbors."""
+    """Reads the master file in safe chunks to calculate exact neighbors."""
     print("\n[3] Calculating Ground Truth from master file...")
+    
+    # LOWER THIS to 100,000 or 50,000 for 16GB RAM
+    SAFE_FAISS_CHUNK = 100000 
     
     test_df = pd.read_parquet(os.path.join(DEST_DIR, "test.parquet"))
     xq = np.vstack(test_df['emb'].values).astype('float32')
@@ -78,15 +104,15 @@ def calculate_ground_truth_from_master():
     
     master_file = pq.ParquetFile(os.path.join(DEST_DIR, "train.parquet"))
     total_rows = master_file.metadata.num_rows
-    total_chunks = (total_rows + FAISS_CHUNK - 1) // FAISS_CHUNK
+    total_chunks = (total_rows + SAFE_FAISS_CHUNK - 1) // SAFE_FAISS_CHUNK
     
     chunk_idx = 1
-    # Read in larger chunks (1M rows) for FAISS efficiency
-    for batch in master_file.iter_batches(batch_size=FAISS_CHUNK):
+    for batch in master_file.iter_batches(batch_size=SAFE_FAISS_CHUNK):
         print(f" -> FAISS Search on chunk {chunk_idx}/{total_chunks}...")
-        df = batch.to_pandas()
-        xb = np.vstack(df['emb'].values).astype('float32')
-        ids = df['id'].values.astype('int64')
+        
+        xb = batch['emb'].values.to_numpy().reshape(-1, TARGET_DIM).astype('float32')
+        ids = batch['id'].to_numpy().astype('int64')
+        
         faiss.normalize_L2(xb)
         
         # Local index for this chunk
@@ -94,15 +120,28 @@ def calculate_ground_truth_from_master():
         local_index.add_with_ids(xb, ids)
         local_dist, local_ind = local_index.search(xq, TOP_K)
         
-        # Merge with global results
-        for q_idx in range(num_queries):
-            combined_dist = np.concatenate([global_distances[q_idx], local_dist[q_idx]])
-            combined_ind = np.concatenate([global_indices[q_idx], local_ind[q_idx]])
-            
-            sort_order = np.argsort(combined_dist)[::-1]
-            
-            global_distances[q_idx] = combined_dist[sort_order][:TOP_K]
-            global_indices[q_idx] = combined_ind[sort_order][:TOP_K]
+        # --- VECTORIZED MERGE (100x Faster, uses almost 0 extra RAM) ---
+        # Combine global and local results horizontally
+        combined_dist = np.concatenate([global_distances, local_dist], axis=1) 
+        combined_ind = np.concatenate([global_indices, local_ind], axis=1)
+        
+        # Sort and take the top TOP_K for all queries simultaneously
+        sort_order = np.argsort(-combined_dist, axis=1)[:, :TOP_K]
+        row_indices = np.arange(num_queries)[:, None]
+        
+        global_distances = combined_dist[row_indices, sort_order]
+        global_indices = combined_ind[row_indices, sort_order]
+        
+        # --- EXPLICIT MEMORY CLEANUP ---
+        # Force Python and FAISS to release the gigabytes of RAM immediately
+        del xb
+        del ids
+        del local_index
+        del local_dist
+        del local_ind
+        del combined_dist
+        del combined_ind
+        gc.collect()
             
         chunk_idx += 1
 
@@ -123,4 +162,4 @@ if __name__ == "__main__":
     merge_and_slice_train_files()
     calculate_ground_truth_from_master()
     
-    print("\ng 10M Single-File Dataset is complete and ready!")
+    print("\nDataset preparation is complete and ready!")
