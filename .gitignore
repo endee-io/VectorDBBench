@@ -12,6 +12,8 @@ venv/
 .idea/
 logs/
 vectordb_bench/results/cloudleaderboard/
+vectordataset_label_filter/
+vectordb_bench/results/Endee/
 
 # Worktrees
 .worktrees/

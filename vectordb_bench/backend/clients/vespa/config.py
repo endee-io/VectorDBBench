@@ -6,7 +6,7 @@ from ..api import DBCaseConfig, DBConfig, MetricType
 
 VespaMetric: TypeAlias = Literal["euclidean", "angular", "dotproduct", "prenormalized-angular", "hamming", "geodegrees"]
 
-VespaQuantizationType: TypeAlias = Literal["none", "binary"]
+VespaQuantizationType: TypeAlias = Literal["none", "binary", "bfloat16", "int8"]
 
 
 class VespaConfig(DBConfig):
@@ -26,6 +26,28 @@ class VespaHNSWConfig(BaseModel, DBCaseConfig):
     M: int = 16
     efConstruction: int = 200
     ef: int = 100
+    # Largest absolute component across the corpus, used to derive the int8 scale.
+    # Must be measured per dataset (`python -m vectordb_bench.tools.int8_scale <parquet>`):
+    # the benchmark vectors are not unit-normalized, so there is no safe default.
+    int8_max_abs: float | None = None
+
+    @property
+    def int8_scale(self) -> float:
+        """Factor mapping the corpus maximum onto the int8 ceiling of 127.
+
+        A single global scalar is required: cosine is invariant to a per-vector
+        scalar, so this leaves rankings untouched, whereas per-dimension scaling
+        would stretch the axes independently and distort the metric.
+        """
+        if not self.int8_max_abs or self.int8_max_abs <= 0:
+            msg = (
+                "quantization_type='int8' needs int8_max_abs (the dataset's largest absolute "
+                "component). Measure it with `python -m vectordb_bench.tools.int8_scale "
+                "<train.parquet>` and pass --int8-max-abs. Note these vectors are NOT "
+                "unit-normalized, so a fixed 127 scale overflows int8 and corrupts every vector."
+            )
+            raise ValueError(msg)
+        return 127.0 / self.int8_max_abs
 
     def index_param(self) -> dict:
         return {

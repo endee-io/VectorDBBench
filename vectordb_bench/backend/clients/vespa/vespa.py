@@ -4,6 +4,7 @@ import math
 from collections.abc import Generator
 from contextlib import contextmanager
 
+import numpy as np
 from vespa import application
 
 from ..api import VectorDB
@@ -61,6 +62,18 @@ class Vespa(VectorDB):
         """Wheather this database need to normalize dataset to support COSINE"""
         return False
 
+    def _quantize_int8(self, vectors: list) -> list:
+        """Map float vectors onto the int8 grid using the corpus-derived scale.
+
+        Applied identically to documents and queries, since a cosine comparison
+        is only meaningful when both sides live in the same space. Rounds rather
+        than truncates, and clamps as a backstop so a component larger than the
+        measured maximum saturates at +-127 instead of wrapping to the opposite
+        sign.
+        """
+        scaled = np.asarray(vectors, dtype=np.float32) * self.case_config.int8_scale
+        return np.clip(np.rint(scaled), -127, 127).astype(np.int8).tolist()
+
     def insert_embeddings(
         self,
         embeddings: list[list[float]],
@@ -79,6 +92,9 @@ class Vespa(VectorDB):
             int: inserted data count
         """
         assert self.client is not None
+
+        if self.case_config.quantization_type == "int8":
+            embeddings = self._quantize_int8(embeddings)
 
         data = ({"id": str(i), "fields": {"id": i, "embedding": e}} for i, e in zip(metadata, embeddings, strict=True))
         self.client.feed_iterable(data, self.schema_name)
@@ -104,7 +120,9 @@ class Vespa(VectorDB):
 
         ef = self.case_config.ef
         extra_ef = max(0, ef - k)
-        embedding_field = "embedding" if self.case_config.quantization_type == "none" else "embedding_binary"
+        # Only the binary mode indexes a separate derived field; bfloat16 and int8
+        # change the cell type of `embedding` itself.
+        embedding_field = "embedding_binary" if self.case_config.quantization_type == "binary" else "embedding"
 
         yql = (
             f"select id from {self.schema_name} where "
@@ -116,11 +134,24 @@ class Vespa(VectorDB):
             id_filter = filters.get("id")
             yql += f" and id >= {id_filter}"
 
-        query_embedding = query if self.case_config.quantization_type == "none" else util.binarize_tensor(query)
+        if self.case_config.quantization_type == "binary":
+            query_embedding = util.binarize_tensor(query)
+        elif self.case_config.quantization_type == "int8":
+            query_embedding = self._quantize_int8(query)
+        else:
+            query_embedding = query
 
         ranking = self.case_config.quantization_type
 
-        result = self.client.query({"yql": yql, "input.query(query_embedding)": query_embedding, "ranking": ranking})
+        # `hits` defaults to 10 in Vespa, which would cap recall whenever k > 10.
+        result = self.client.query(
+            {
+                "yql": yql,
+                "hits": k,
+                "input.query(query_embedding)": query_embedding,
+                "ranking": ranking,
+            }
+        )
         return [child["fields"]["id"] for child in result.get_json()["root"]["children"]]
 
     def optimize(self, data_size: int | None = None):
@@ -145,11 +176,22 @@ class Vespa(VectorDB):
             ApplicationPackage,
             Document,
             Field,
+            QueryField,
+            QueryProfile,
             RankProfile,
             Schema,
             Validation,
             ValidationID,
         )
+
+        # binary keeps a float source field; the binarize/pack_bits pipeline below
+        # derives the packed int8 field from it.
+        tensor_type = {
+            "none": "float",
+            "binary": "float",
+            "bfloat16": "bfloat16",
+            "int8": "int8",
+        }[self.case_config.quantization_type]
 
         fields = [
             Field(
@@ -159,7 +201,7 @@ class Vespa(VectorDB):
             ),
             Field(
                 "embedding",
-                f"tensor<float>(x[{self.dim}])",
+                f"tensor<{tensor_type}>(x[{self.dim}])",
                 indexing=["summary", "attribute", "index"],
                 ann=HNSW(**self.case_config.index_param()),
             ),
@@ -208,9 +250,23 @@ class Vespa(VectorDB):
                             inherits="default",
                             inputs=[("query(query_embedding)", f"tensor<int8>(x[{math.ceil(self.dim / 8)}])")],
                         ),
+                        RankProfile(
+                            name="bfloat16",
+                            first_phase="",
+                            inherits="default",
+                            inputs=[("query(query_embedding)", f"tensor<bfloat16>(x[{self.dim}])")],
+                        ),
+                        RankProfile(
+                            name="int8",
+                            first_phase="",
+                            inherits="default",
+                            inputs=[("query(query_embedding)", f"tensor<int8>(x[{self.dim}])")],
+                        ),
                     ],
                 )
             ],
+            # Vespa caps `hits` at 400 by default, below the k used by some cases.
+            query_profile=QueryProfile(fields=[QueryField(name="maxHits", value=10000)]),
             validations=[
                 Validation(ValidationID.tensorTypeChange, until=tomorrow),
                 Validation(ValidationID.fieldTypeChange, until=tomorrow),
