@@ -28,6 +28,8 @@ class Vespa(VectorDB):
         self.db_config = db_config
         self.case_config = db_case_config or VespaHNSWConfig()
         self.schema_name = collection_name
+        # Pooled query session; opened per process in init(), see the note there.
+        self.sync = None
 
         client = self.deploy_http()
         client.wait_for_application_up()
@@ -55,7 +57,17 @@ class Vespa(VectorDB):
             >>>     self.insert_embeddings()
         """
         self.client = application.Vespa(self.db_config["url"], port=self.db_config["port"])
-        yield
+        # Vespa.query() wraps every single call in its own short-lived VespaSync
+        # ("Use one connection as this is a single query"), so searching through it
+        # opens and closes a TCP connection per query. At benchmark rates that
+        # exhausts the client's ephemeral ports -- the sockets pile up in TIME_WAIT
+        # -- and the measurement becomes connection setup rather than Vespa. Hold
+        # one pooled session open for the life of the process instead; feeding
+        # already pools internally, so only search needs this.
+        with self.client.syncio(connections=10) as sync:
+            self.sync = sync
+            yield
+            self.sync = None
         self.client = None
 
     def need_normalize_cosine(self) -> bool:
@@ -116,7 +128,7 @@ class Vespa(VectorDB):
         Returns:
             list[int]: list of k most similar embeddings IDs to the query embedding.
         """
-        assert self.client is not None
+        assert self.sync is not None
 
         ef = self.case_config.ef
         extra_ef = max(0, ef - k)
@@ -144,7 +156,8 @@ class Vespa(VectorDB):
         ranking = self.case_config.quantization_type
 
         # `hits` defaults to 10 in Vespa, which would cap recall whenever k > 10.
-        result = self.client.query(
+        # Goes through the pooled session from init(), not self.client.query().
+        result = self.sync.query(
             {
                 "yql": yql,
                 "hits": k,
