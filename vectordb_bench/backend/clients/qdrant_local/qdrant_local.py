@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import (
     Batch,
+    Datatype,
     CollectionStatus,
     FieldCondition,
     Filter,
@@ -52,7 +53,9 @@ class QdrantLocal(VectorDB):
     ):
         """Initialize wrapper around the qdrant."""
         self.name = name
-        self.db_config = db_config
+        db_config = dict(db_config)
+        collection_name = db_config.pop("collection_name", None) or collection_name  # --collection-name
+        self.db_config = db_config  # what is left is passed straight to QdrantClient(**db_config)
         self.case_config = db_case_config
         self.search_parameter = self.case_config.search_param()
         self.collection_name = collection_name
@@ -96,7 +99,8 @@ class QdrantLocal(VectorDB):
         log.info(
             f"Index parameters: m={self.case_config.index_param()['m']}, "
             f"ef_construct={self.case_config.index_param()['ef_construct']}, "
-            f"on_disk={self.case_config.index_param()['on_disk']}"
+            f"on_disk={self.case_config.index_param()['on_disk']}, "
+            f"quantization={self.case_config.quantization}, datatype={self.case_config.datatype}"
         )
 
         # If the on_disk is true, we enable both on disk index and vectors.
@@ -107,7 +111,11 @@ class QdrantLocal(VectorDB):
                     size=dim,
                     distance=self.case_config.index_param()["distance"],
                     on_disk=self.case_config.index_param()["on_disk"],
+                    datatype=Datatype(self.case_config.datatype),
                 ),
+                quantization_config=self.case_config.quantization_config(),
+                # defer HNSW building until optimize(): indexing while loading creates many tiny segments
+                optimizers_config=OptimizersConfigDiff(indexing_threshold=0),
                 hnsw_config=HnswConfigDiff(
                     m=self.case_config.index_param()["m"],
                     ef_construct=self.case_config.index_param()["ef_construct"],
@@ -129,21 +137,30 @@ class QdrantLocal(VectorDB):
 
     def optimize(self, data_size: int | None = None):
         assert self.client, "Please call self.init() before"
-        # wait for vectors to be fully indexed
+        # Indexing was deferred while loading; turn it on now and wait until it has actually run.
+        # (Status can read GREEN before the optimizer has even started, so also require that
+        # the indexed vector count has caught up with the stored point count.)
         try:
+            self.client.update_collection(
+                collection_name=self.collection_name,
+                optimizer_config=OptimizersConfigDiff(indexing_threshold=100),
+            )
+            ready_polls = 0
             while True:
-                info = self.client.get_collection(self.collection_name)
                 time.sleep(SECONDS_WAITING_FOR_INDEXING_API_CALL)
-                if info.status != CollectionStatus.GREEN:
-                    continue
-                if info.status == CollectionStatus.GREEN:
-                    log.info(f"Finishing building index for collection: {self.collection_name}")
-                    msg = (
-                        f"Stored vectors: {info.points_count}, Indexed vectors: {info.indexed_vectors_count}, "
-                        f"Collection status: {info.status}"
-                    )
-                    log.info(msg)
-                    return
+                info = self.client.get_collection(self.collection_name)
+                points = info.points_count or 0
+                indexed = info.indexed_vectors_count or 0
+                if info.status == CollectionStatus.GREEN and indexed >= 0.99 * points:
+                    ready_polls += 1
+                    if ready_polls >= 2:
+                        log.info(
+                            f"Finished building index for {self.collection_name}: stored={points}, "
+                            f"indexed={indexed}, status={info.status}"
+                        )
+                        return
+                else:
+                    ready_polls = 0
 
         except Exception as e:
             log.warning(f"QdrantLocal ready to search error: {e}")
@@ -169,11 +186,6 @@ class QdrantLocal(VectorDB):
         assert len(embeddings) == len(metadata)
         insert_count = 0
 
-        # disable indexing for quick insertion
-        self.client.update_collection(
-            collection_name=self.collection_name,
-            optimizer_config=OptimizersConfigDiff(indexing_threshold=0),
-        )
         try:
             for offset in range(0, len(embeddings), QDRANT_BATCH_SIZE):
                 vectors = embeddings[offset : offset + QDRANT_BATCH_SIZE]
@@ -184,13 +196,7 @@ class QdrantLocal(VectorDB):
                     wait=True,
                     points=Batch(ids=ids, payloads=payloads, vectors=vectors),
                 )
-                insert_count += QDRANT_BATCH_SIZE
-            # enable indexing after insertion
-            self.client.update_collection(
-                collection_name=self.collection_name,
-                optimizer_config=OptimizersConfigDiff(indexing_threshold=100),
-            )
-
+                insert_count += len(ids)
         except Exception as e:
             log.info(f"Failed to insert data, {e}")
             return insert_count, e

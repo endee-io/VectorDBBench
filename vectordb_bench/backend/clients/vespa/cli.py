@@ -22,8 +22,38 @@ class VespaTypedDict(CommonTypedDict, HNSWFlavor1):
         int,
         click.option("--port", "-p", type=int, help="connection port", default=8080),
     ]
+    config_port: Annotated[
+        int,
+        click.option("--config-port", type=int, help="Vespa config-server (deploy) port", default=19071, show_default=True),
+    ]
+    collection_name: Annotated[
+        str,
+        click.option(
+            "--collection-name",
+            type=str,
+            default=None,
+            help="Vespa schema/document-type name (letters, digits, _; default: VectorDBBenchCollection)",
+        ),
+    ]
     quantization: Annotated[
-        str, click.option("--quantization", type=click.Choice(["none", "binary"], case_sensitive=False), default="none")
+        str,
+        click.option(
+            "--quantization",
+            type=click.Choice(["none", "binary", "bfloat16", "int8"], case_sensitive=False),
+            default="none",
+        ),
+    ]
+    int8_max_abs: Annotated[
+        float | None,
+        click.option(
+            "--int8-max-abs",
+            type=float,
+            default=None,
+            help=(
+                "Largest absolute component in the dataset, required by --quantization int8. "
+                "Measure with `python -m vectordb_bench.tools.int8_scale <train.parquet>`."
+            ),
+        ),
     ]
 
 
@@ -37,11 +67,12 @@ def Vespa(**params: Unpack[VespaTypedDict]):
         "M": params["m"],
         "efConstruction": params["ef_construction"],
         "ef": params["ef_search"],
+        "int8_max_abs": params["int8_max_abs"],
     }
 
     run(
         db=DB.Vespa,
-        db_config=VespaConfig(url=SecretStr(params["uri"]), port=params["port"]),
+        db_config=VespaConfig(url=SecretStr(params["uri"]), port=params["port"], config_port=params["config_port"], collection_name=params["collection_name"]),
         db_case_config=VespaHNSWConfig(**{k: v for k, v in case_params.items() if v}),
         **params,
     )

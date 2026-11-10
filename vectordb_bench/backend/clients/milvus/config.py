@@ -1,4 +1,4 @@
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, SecretStr
 
@@ -13,9 +13,11 @@ class MilvusConfig(DBConfig):
     password: SecretStr | None = None
     num_shards: int = 1
     replica_number: int = 1
+    collection_name: str | None = None  # None -> client default ("VDBBench")
 
     def to_dict(self) -> dict:
         return {
+            "collection_name": self.collection_name or None,
             "uri": self.uri.get_secret_value(),
             "user": self.user if self.user else None,
             "password": self.password.get_secret_value() if self.password else None,
@@ -30,6 +32,8 @@ class MilvusIndexConfig(BaseModel):
     index: IndexType
     metric_type: MetricType | None = None
     use_partition_key: bool = False  # for label-filter
+    # Storage type of the vector field. FLOAT32 (default) keeps existing behaviour unchanged.
+    vector_dtype: Literal["FLOAT32", "FLOAT16", "BFLOAT16"] = "FLOAT32"
 
     @property
     def is_gpu_index(self) -> bool:

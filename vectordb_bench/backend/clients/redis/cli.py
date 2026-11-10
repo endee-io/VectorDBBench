@@ -48,7 +48,21 @@ class RedisTypedDict(TypedDict):
     ]
 
 
-class RedisHNSWTypedDict(CommonTypedDict, RedisTypedDict, HNSWFlavor2): ...
+class RedisHNSWTypedDict(CommonTypedDict, RedisTypedDict, HNSWFlavor2):
+    collection_name: Annotated[
+        str,
+        click.option("--collection-name", type=str, default=None, help="Index name (default: index)"),
+    ]
+    vector_type: Annotated[
+        str,
+        click.option(
+            "--vector-type",
+            type=click.Choice(["FLOAT32", "FLOAT16", "BFLOAT16"], case_sensitive=False),
+            default="FLOAT32",
+            show_default=True,
+            help="Vector field storage type",
+        ),
+    ]
 
 
 @cli.command()
@@ -66,11 +80,13 @@ def Redis(**parameters: Unpack[RedisHNSWTypedDict]):
             ssl=parameters["ssl"],
             ssl_ca_certs=parameters["ssl_ca_certs"],
             cmd=parameters["cmd"],
+            collection_name=parameters["collection_name"],
         ),
         db_case_config=RedisHNSWConfig(
             M=parameters["m"],
             efConstruction=parameters["ef_construction"],
             ef=parameters["ef_runtime"],
+            vector_type=parameters["vector_type"].upper(),
         ),
         **parameters,
     )
