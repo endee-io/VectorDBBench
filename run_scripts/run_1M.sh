@@ -103,13 +103,44 @@
 #   --search-serial
 
 
-NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/debian/vectordataset" \
+# NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/debian/vectordataset" \
+# vectordbbench endee \
+#   --token "mydb:X338qP0DT8IJDa3LRT3QShKZixgqufHe" \
+#   --region mumbai \
+#   --base-url "http://148.113.59.156:8080/api/v2" \
+#   --collection-name 1M_multivec_5fields_count5 \
+#   --task-label "st4rebuild2same_searchfield5" \
+#   --m 16 \
+#   --ef-con 128 \
+#   --ef-search 128 \
+#   --space-type cosine \
+#   --precision int16 \
+#   --field-type multi_vector \
+#   --multivec-fields multivec1 \
+#   --multivec-fields multivec2 \
+#   --multivec-fields multivec3 \
+#   --multivec-fields multivec4 \
+#   --multivec-fields multivec5 \
+#   --multivec-count 5 \
+#   --search-field multivec5 \
+#   --case-type Performance768D1M \
+#   --k 30 \
+#   --num-concurrency "16" \
+#   --concurrency-duration 30 \
+#   --concurrency-timeout 3600 \
+#   --skip-drop-old \
+#   --skip-load \
+#   --search-concurrent \
+#   --search-serial
+
+
+NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/admin/vectordataset" \
 vectordbbench endee \
-  --token "mydb:X338qP0DT8IJDa3LRT3QShKZixgqufHe" \
-  --region mumbai \
-  --base-url "http://148.113.59.156:8080/api/v2" \
-  --collection-name 1M_multivec_5fields_count5 \
-  --task-label "st4rebuild2same_searchfield5" \
+  --token "changedcode:0Xye9bmY34YNavKMAkKZwoqNPBPLD1sp" \
+  --region local \
+  --base-url "http://172.31.11.45:8080/api/v2" \
+  --collection-name 1M_multivec_3fields_count3_label_changedcode \
+  --task-label "multivecchangedcode_again_run2" \
   --m 16 \
   --ef-con 128 \
   --ef-search 128 \
@@ -119,11 +150,11 @@ vectordbbench endee \
   --multivec-fields multivec1 \
   --multivec-fields multivec2 \
   --multivec-fields multivec3 \
-  --multivec-fields multivec4 \
-  --multivec-fields multivec5 \
-  --multivec-count 5 \
-  --search-field multivec5 \
-  --case-type Performance768D1M \
+  --multivec-count 3 \
+  --search-field multivec1 \
+  --case-type LabelFilterPerformanceCase \
+  --dataset-with-size-type "Medium Cohere (768dim, 1M)" \
+  --label-percentage 0.50 \
   --k 30 \
   --num-concurrency "16" \
   --concurrency-duration 30 \
