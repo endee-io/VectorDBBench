@@ -105,6 +105,16 @@ class QdrantLocalTypedDict(CommonTypedDict):
             help="HNSW index parameter hnsw_ef, set 0 to use ef_construct for search",
         ),
     ]
+    acorn: Annotated[
+        bool,
+        click.option("--acorn/--no-acorn", default=False, show_default=True,
+                     help="Query-time ACORN filtered search (Qdrant >= 1.16)"),
+    ]
+    acorn_max_selectivity: Annotated[
+        float | None,
+        click.option("--acorn-max-selectivity", type=float, default=None,
+                     help="ACORN max_selectivity (Qdrant default 0.4: ACORN only for filters keeping < 40 %)"),
+    ]
 
 
 @cli.command()
@@ -121,6 +131,8 @@ def QdrantLocal(**parameters: Unpack[QdrantLocalTypedDict]):
             m=parameters["m"],
             ef_construct=parameters["ef_construct"],
             hnsw_ef=parameters["hnsw_ef"],
+            acorn=parameters["acorn"],
+            acorn_max_selectivity=parameters["acorn_max_selectivity"],
             quantization=parameters["quantization"].lower(),
             datatype=parameters["datatype"].lower(),
             quant_always_ram=parameters["quant_always_ram"],

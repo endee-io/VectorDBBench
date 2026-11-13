@@ -34,6 +34,26 @@ class VespaHNSWConfig(BaseModel, DBCaseConfig):
     # Must be measured per dataset (`python -m vectordb_bench.tools.int8_scale <parquet>`):
     # the benchmark vectors are not unit-normalized, so there is no safe default.
     int8_max_abs: float | None = None
+    # keep the "label" attribute in the schema even when the case itself has no labels: Vespa redeploys the schema on
+    # every client start, so a search-only int-filter run on a collection loaded by a label case must not drop the field
+    label_field: bool = False
+    # optional query-time filter tuning (None = Vespa's defaults from the schema / rank profile):
+    #   ranking.matching.approximateThreshold   below this hit ratio the filtered NN search is exact (brute force)
+    #   ranking.matching.filterFirstThreshold   below this hit ratio HNSW explores the filtered nodes only (filter-first)
+    #   ranking.matching.filterFirstExploration how far filter-first also explores non-matching neighbours (higher = recall)
+    approximate_threshold: float | None = None
+    filter_first_threshold: float | None = None
+    filter_first_exploration: float | None = None
+
+    def query_tuning(self) -> dict:
+        out = {}
+        if self.approximate_threshold is not None:
+            out["ranking.matching.approximateThreshold"] = self.approximate_threshold
+        if self.filter_first_threshold is not None:
+            out["ranking.matching.filterFirstThreshold"] = self.filter_first_threshold
+        if self.filter_first_exploration is not None:
+            out["ranking.matching.filterFirstExploration"] = self.filter_first_exploration
+        return out
 
     @property
     def int8_scale(self) -> float:

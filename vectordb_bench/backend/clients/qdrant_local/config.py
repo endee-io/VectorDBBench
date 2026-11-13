@@ -58,6 +58,10 @@ class QdrantLocalIndexConfig(BaseModel, DBCaseConfig):
     m: int
     ef_construct: int
     hnsw_ef: int | None = 0
+    # ACORN filtered search (query-time, Qdrant >= 1.16): also explores neighbours of filtered-out neighbours.
+    # Only used when the estimated filter selectivity is below acorn_max_selectivity (Qdrant default 0.4).
+    acorn: bool = False
+    acorn_max_selectivity: float | None = None
     on_disk: bool | None = False
     quantization: QdrantQuantization = "none"
     datatype: QdrantDatatype = "float32"
@@ -131,6 +135,12 @@ class QdrantLocalIndexConfig(BaseModel, DBCaseConfig):
 
         if self.hnsw_ef != 0:
             search_params["hnsw_ef"] = self.hnsw_ef
+
+        if self.acorn:
+            acorn = {"enable": True}
+            if self.acorn_max_selectivity is not None:
+                acorn["max_selectivity"] = self.acorn_max_selectivity
+            search_params["acorn"] = acorn
 
         if self.quantization != "none":
             search_params["quantization"] = {

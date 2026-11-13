@@ -55,6 +55,30 @@ class VespaTypedDict(CommonTypedDict, HNSWFlavor1):
             ),
         ),
     ]
+    label_field: Annotated[
+        bool,
+        click.option(
+            "--label-field/--no-label-field",
+            default=False,
+            help="Keep the label attribute in the schema even for cases without labels (search-only int-filter runs on a "
+            "collection loaded by a label-filter case)",
+        ),
+    ]
+    approximate_threshold: Annotated[
+        float | None,
+        click.option("--approximate-threshold", type=float, default=None,
+                     help="Query-time ranking.matching.approximateThreshold (default: Vespa's)"),
+    ]
+    filter_first_threshold: Annotated[
+        float | None,
+        click.option("--filter-first-threshold", type=float, default=None,
+                     help="Query-time ranking.matching.filterFirstThreshold (default: Vespa's)"),
+    ]
+    filter_first_exploration: Annotated[
+        float | None,
+        click.option("--filter-first-exploration", type=float, default=None,
+                     help="Query-time ranking.matching.filterFirstExploration (default: Vespa's)"),
+    ]
 
 
 @cli.command()
@@ -70,9 +94,16 @@ def Vespa(**params: Unpack[VespaTypedDict]):
         "int8_max_abs": params["int8_max_abs"],
     }
 
+    for key in ("approximate_threshold", "filter_first_threshold", "filter_first_exploration"):
+        if params[key] is not None:  # 0 is a valid threshold, so not filtered by truthiness below
+            case_params[key] = params[key]
+    case_params["label_field"] = params["label_field"]
+
     run(
         db=DB.Vespa,
         db_config=VespaConfig(url=SecretStr(params["uri"]), port=params["port"], config_port=params["config_port"], collection_name=params["collection_name"]),
-        db_case_config=VespaHNSWConfig(**{k: v for k, v in case_params.items() if v}),
+        db_case_config=VespaHNSWConfig(
+            **{k: v for k, v in case_params.items() if v or (k in ("approximate_threshold", "filter_first_threshold", "filter_first_exploration") and v is not None)}
+        ),
         **params,
     )

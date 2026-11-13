@@ -13,12 +13,16 @@ from qdrant_client.http.models import (
     FieldCondition,
     Filter,
     HnswConfigDiff,
+    MatchValue,
     OptimizersConfigDiff,
     PayloadSchemaType,
     Range,
     SearchParams,
     VectorParams,
 )
+
+from vectordb_bench.backend.filter import Filter as BenchFilter
+from vectordb_bench.backend.filter import FilterOp
 
 from ..api import VectorDB
 from .config import QdrantLocalIndexConfig
@@ -41,6 +45,12 @@ def qdrant_collection_exists(client: QdrantClient, collection_name: str) -> bool
 
 
 class QdrantLocal(VectorDB):
+    supported_filter_types: list[FilterOp] = [
+        FilterOp.NonFilter,
+        FilterOp.NumGE,
+        FilterOp.StrEqual,
+    ]
+
     def __init__(
         self,
         dim: int,
@@ -49,6 +59,7 @@ class QdrantLocal(VectorDB):
         collection_name: str = "QdrantLocalCollection",
         drop_old: bool = False,
         name: str = "QdrantLocal",
+        with_scalar_labels: bool = False,
         **kwargs,
     ):
         """Initialize wrapper around the qdrant."""
@@ -63,6 +74,9 @@ class QdrantLocal(VectorDB):
 
         self._primary_field = "pk"
         self._vector_field = "vector"
+        self._scalar_label_field = "label"
+        self.with_scalar_labels = with_scalar_labels
+        self.query_filter = None
 
         client = QdrantClient(**self.db_config)
 
@@ -128,6 +142,12 @@ class QdrantLocal(VectorDB):
                 field_name=self._primary_field,
                 field_schema=PayloadSchemaType.INTEGER,
             )
+            if self.with_scalar_labels:  # label-filter cases: keyword index so the filter is indexed, not scanned
+                qdrant_client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=self._scalar_label_field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
 
         except Exception as e:
             if "already exists!" in str(e):
@@ -170,6 +190,7 @@ class QdrantLocal(VectorDB):
         self,
         embeddings: Iterable[list[float]],
         metadata: list[int],
+        labels_data: list[str] | None = None,
         **kwargs,
     ) -> tuple[int, Exception]:
         """Insert embeddings into the database.
@@ -191,6 +212,9 @@ class QdrantLocal(VectorDB):
                 vectors = embeddings[offset : offset + QDRANT_BATCH_SIZE]
                 ids = metadata[offset : offset + QDRANT_BATCH_SIZE]
                 payloads = [{self._primary_field: v} for v in ids]
+                if self.with_scalar_labels and labels_data is not None:
+                    for p, label in zip(payloads, labels_data[offset : offset + QDRANT_BATCH_SIZE], strict=True):
+                        p[self._scalar_label_field] = label
                 _ = self.client.upsert(
                     collection_name=self.collection_name,
                     wait=True,
@@ -203,35 +227,39 @@ class QdrantLocal(VectorDB):
         else:
             return insert_count, None
 
+    def prepare_filter(self, filters: BenchFilter):
+        """VectorDBBench filters: NumGE = id >= int_value (inclusive), StrEqual = label == label_value."""
+        if filters.type == FilterOp.NonFilter:
+            self.query_filter = None
+        elif filters.type == FilterOp.NumGE:
+            self.query_filter = Filter(
+                must=[FieldCondition(key=self._primary_field, range=Range(gte=filters.int_value))],
+            )
+        elif filters.type == FilterOp.StrEqual:
+            self.query_filter = Filter(
+                must=[FieldCondition(key=self._scalar_label_field, match=MatchValue(value=filters.label_value))],
+            )
+        else:
+            msg = f"Not support Filter for QdrantLocal - {filters}"
+            raise ValueError(msg)
+
     def search_embedding(
         self,
         query: list[float],
         k: int = 100,
-        filters: dict | None = None,
         timeout: int | None = None,
+        **kwargs,
     ) -> list[int]:
         """Perform a search on a query embedding and return results with score.
-        Should call self.init() first.
+        Should call self.init() first; the filter comes from prepare_filter().
         """
         assert self.client is not None
 
-        f = None
-        if filters:
-            f = Filter(
-                must=[
-                    FieldCondition(
-                        key=self._primary_field,
-                        range=Range(
-                            gt=filters.get("id"),
-                        ),
-                    ),
-                ],
-            )
         res = self.client.query_points(
             collection_name=self.collection_name,
             query=query,
             limit=k,
-            query_filter=f,
+            query_filter=self.query_filter,
             search_params=SearchParams(**self.search_parameter),
             timeout=timeout,
         ).points

@@ -33,7 +33,14 @@ class MilvusIndexConfig(BaseModel):
     metric_type: MetricType | None = None
     use_partition_key: bool = False  # for label-filter
     # Storage type of the vector field. FLOAT32 (default) keeps existing behaviour unchanged.
-    vector_dtype: Literal["FLOAT32", "FLOAT16", "BFLOAT16"] = "FLOAT32"
+    # INT8 = INT8_VECTOR field: the client scales every component by 127 / int8_max_abs and rounds (int8_max_abs required).
+    vector_dtype: Literal["FLOAT32", "FLOAT16", "BFLOAT16", "INT8"] = "FLOAT32"
+    int8_max_abs: float | None = None
+    # COSINE dataset searched as IP on client-normalised vectors (identical ranking). Needed by quantizers that share one
+    # value range across all dimensions (HNSW_SQ SQ4U): with metric COSINE Milvus quantizes the raw, un-normalised vectors.
+    cosine_via_ip: bool = False
+    # query-time filtered-search hint (Milvus docs, Filtered Search): search_params["hints"] = "iterative_filter"
+    iterative_filter: bool = False
 
     @property
     def is_gpu_index(self) -> bool:
@@ -50,6 +57,8 @@ class MilvusIndexConfig(BaseModel):
 
         if self.is_gpu_index and self.metric_type == MetricType.COSINE:
             return MetricType.L2.value
+        if self.cosine_via_ip and self.metric_type == MetricType.COSINE:
+            return MetricType.IP.value
         return self.metric_type.value
 
 

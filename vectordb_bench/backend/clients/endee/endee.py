@@ -15,6 +15,9 @@ log = logging.getLogger(__name__)
 _VECTOR_FIELD_NAME = "dense"
 
 
+_INT_FILTER_MAX = 2**31 - 1  # upper bound of the NumGE filter (ids are int32-sized in every dataset)
+
+
 class Endee(VectorDB):
     """
     VectorDBBench client implementation for Endee VectorDB (v2 Collections API).
@@ -161,7 +164,9 @@ class Endee(VectorDB):
             self.filter_expr = None
 
         elif filters.type == FilterOp.NumGE:
-            self.filter_expr = [{self._scalar_id_field: {"$range": [filters.int_value, 1_000_000]}}]
+            # id >= int_value. $range (supported by every ndd build; some older builds lack $gte) with an upper bound far
+            # above any dataset id - the former bound 1_000_000 silently dropped ids above 1M on the 5M / 10M datasets.
+            self.filter_expr = [{self._scalar_id_field: {"$range": [filters.int_value, _INT_FILTER_MAX]}}]
 
         elif filters.type == FilterOp.StrEqual:
             self.filter_expr = [{self._scalar_label_field: {"$eq": filters.label_value}}]

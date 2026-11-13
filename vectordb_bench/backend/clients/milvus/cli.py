@@ -27,6 +27,12 @@ def _with_partition_key(db_case_config: BaseModel, parameters: dict) -> BaseMode
     update = {"use_partition_key": _use_partition_key(parameters)}
     if parameters.get("vector_dtype"):
         update["vector_dtype"] = parameters["vector_dtype"].upper()
+    if parameters.get("int8_max_abs") is not None:
+        update["int8_max_abs"] = parameters["int8_max_abs"]
+    if parameters.get("cosine_via_ip"):
+        update["cosine_via_ip"] = True
+    if parameters.get("iterative_filter"):
+        update["iterative_filter"] = True
     return db_case_config.model_copy(update=update)
 
 
@@ -73,10 +79,36 @@ class MilvusTypedDict(TypedDict):
         str,
         click.option(
             "--vector-dtype",
-            type=click.Choice(["FLOAT32", "FLOAT16", "BFLOAT16"], case_sensitive=False),
+            type=click.Choice(["FLOAT32", "FLOAT16", "BFLOAT16", "INT8"], case_sensitive=False),
             default="FLOAT32",
             show_default=True,
-            help="Vector field storage type (FLOAT16/BFLOAT16 need an index that supports them, e.g. HNSW/FLAT/IVF)",
+            help="Vector field storage type (FLOAT16/BFLOAT16/INT8 need an index that supports them, e.g. HNSW/FLAT/IVF). "
+            "INT8 = INT8_VECTOR field, needs --int8-max-abs",
+        ),
+    ]
+    int8_max_abs: Annotated[
+        float | None,
+        click.option(
+            "--int8-max-abs",
+            type=float,
+            default=None,
+            help="INT8 only: largest |component| of the dataset; vectors are scaled by 127/value and rounded "
+            "(Cohere 1M: 5.5046, from python -m vectordb_bench.tools.int8_scale)",
+        ),
+    ]
+    iterative_filter: Annotated[
+        bool,
+        click.option("--iterative-filter/--no-iterative-filter", default=False, show_default=True,
+                     help='Filtered search with search_params hints="iterative_filter" (Milvus query-time option)'),
+    ]
+    cosine_via_ip: Annotated[
+        bool,
+        click.option(
+            "--cosine-via-ip/--no-cosine-via-ip",
+            default=False,
+            show_default=True,
+            help="COSINE dataset: L2-normalise vectors in the client and search with metric IP (same ranking). "
+            "Needed for HNSW_SQ SQ4U, which quantizes the raw vectors under COSINE",
         ),
     ]
     use_partition_key: Annotated[
@@ -207,6 +239,17 @@ class MilvusHNSWPQTypedDict(CommonTypedDict, MilvusTypedDict, MilvusHNSWTypedDic
             required=True,
         ),
     ]
+    pq_m: Annotated[
+        int,
+        click.option(
+            "--pq-m",
+            type=int,
+            default=32,
+            show_default=True,
+            help="PQ sub-vector count (Milvus build param 'm'; --m is the HNSW M). Must divide the dimension; "
+            "Milvus docs: commonly D/2, usually within [D/8, D]",
+        ),
+    ]
 
 
 @cli.command()
@@ -230,6 +273,7 @@ def MilvusHNSWPQ(**parameters: Unpack[MilvusHNSWPQTypedDict]):
                 M=parameters["m"],
                 efConstruction=parameters["ef_construction"],
                 ef=parameters["ef_search"],
+                m=parameters["pq_m"],
                 nbits=parameters["nbits"],
                 refine=parameters["refine"],
                 refine_type=parameters["refine_type"],

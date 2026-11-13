@@ -11,6 +11,8 @@ from contextlib import contextmanager
 import numpy as np
 from vespa import application
 
+from vectordb_bench.backend.filter import Filter, FilterOp
+
 from ..api import VectorDB
 from . import util
 from .config import VespaHNSWConfig
@@ -19,6 +21,12 @@ log = logging.getLogger(__name__)
 
 
 class Vespa(VectorDB):
+    supported_filter_types: list[FilterOp] = [
+        FilterOp.NonFilter,
+        FilterOp.NumGE,
+        FilterOp.StrEqual,
+    ]
+
     def __init__(
         self,
         dim: int,
@@ -26,9 +34,13 @@ class Vespa(VectorDB):
         db_case_config: VespaHNSWConfig | None = None,
         collection_name: str = "VectorDBBenchCollection",
         drop_old: bool = False,
+        with_scalar_labels: bool = False,
         **kwargs,
     ) -> None:
         self.dim = dim
+        # label-filter cases: the schema gets a "label" string attribute (fast-search) and every document its label
+        self.with_scalar_labels = with_scalar_labels
+        self.filter_clause = ""
         self.db_config = db_config
         self.case_config = db_case_config or VespaHNSWConfig()
         # Vespa schema / document-type names must look like identifiers.
@@ -36,6 +48,9 @@ class Vespa(VectorDB):
             msg = f"invalid Vespa schema name {collection_name!r}: use letters, digits and underscores, starting with a letter"
             raise ValueError(msg)
         self.schema_name = collection_name
+        # VectorDBBench's insert checkpoint (insert_checkpoint_<collection_name>.json) is keyed by this attribute; without it
+        # every Vespa load shared "unknown_index" and a stale checkpoint made a fresh load skip vectors
+        self.collection_name = collection_name
         # Pooled query session; opened per process in init(), see the note there.
         self.sync = None
 
@@ -78,6 +93,20 @@ class Vespa(VectorDB):
             self.sync = None
         self.client = None
 
+    def prepare_filter(self, filters: Filter):
+        """VectorDBBench filters: NumGE = id >= int_value (inclusive), StrEqual = label == label_value.
+        Vespa evaluates the filter together with nearestNeighbor (pre-filtering via its global filter)."""
+        if filters.type == FilterOp.NonFilter:
+            self.filter_clause = ""
+        elif filters.type == FilterOp.NumGE:
+            self.filter_clause = f" and id >= {int(filters.int_value)}"
+        elif filters.type == FilterOp.StrEqual:
+            value = str(filters.label_value).replace("\\", "\\\\").replace('"', '\\"')
+            self.filter_clause = f' and label contains "{value}"'
+        else:
+            msg = f"Not support Filter for Vespa - {filters}"
+            raise ValueError(msg)
+
     def need_normalize_cosine(self) -> bool:
         """Wheather this database need to normalize dataset to support COSINE"""
         return False
@@ -98,6 +127,7 @@ class Vespa(VectorDB):
         self,
         embeddings: list[list[float]],
         metadata: list[int],
+        labels_data: list[str] | None = None,
         **kwargs,
     ) -> tuple[int, Exception | None]:
         """Insert the embeddings to the vector database. The default number of embeddings for
@@ -116,7 +146,13 @@ class Vespa(VectorDB):
         if self.case_config.quantization_type == "int8":
             embeddings = self._quantize_int8(embeddings)
 
-        data = ({"id": str(i), "fields": {"id": i, "embedding": e}} for i, e in zip(metadata, embeddings, strict=True))
+        if self.with_scalar_labels and labels_data is not None:
+            data = (
+                {"id": str(i), "fields": {"id": i, "embedding": e, "label": lab}}
+                for i, e, lab in zip(metadata, embeddings, labels_data, strict=True)
+            )
+        else:
+            data = ({"id": str(i), "fields": {"id": i, "embedding": e}} for i, e in zip(metadata, embeddings, strict=True))
         self.client.feed_iterable(data, self.schema_name)
         return len(embeddings), None
 
@@ -124,14 +160,13 @@ class Vespa(VectorDB):
         self,
         query: list[float],
         k: int = 100,
-        filters: dict | None = None,
+        **kwargs,
     ) -> list[int]:
-        """Get k most similar embeddings to query vector.
+        """Get k most similar embeddings to query vector (filter from prepare_filter()).
 
         Args:
             query(list[float]): query embedding to look up documents similar to.
             k(int): Number of most similar embeddings to return. Defaults to 100.
-            filters(dict, optional): filtering expression to filter the data while searching.
 
         Returns:
             list[int]: list of k most similar embeddings IDs to the query embedding.
@@ -150,9 +185,7 @@ class Vespa(VectorDB):
             f"nearestNeighbor({embedding_field}, query_embedding)"
         )
 
-        if filters:
-            id_filter = filters.get("id")
-            yql += f" and id >= {id_filter}"
+        yql += self.filter_clause
 
         if self.case_config.quantization_type == "binary":
             query_embedding = util.binarize_tensor(query)
@@ -171,9 +204,14 @@ class Vespa(VectorDB):
                 "hits": k,
                 "input.query(query_embedding)": query_embedding,
                 "ranking": ranking,
+                **self.case_config.query_tuning(),
             }
         )
-        return [child["fields"]["id"] for child in result.get_json()["root"]["children"]]
+        root = result.get_json()["root"]
+        if "errors" in root:
+            msg = f"Vespa query error: {root['errors']}"
+            raise RuntimeError(msg)
+        return [child["fields"]["id"] for child in root.get("children", [])]
 
     def optimize(self, data_size: int | None = None):
         """optimize will be called between insertion and search in performance cases.
@@ -214,11 +252,15 @@ class Vespa(VectorDB):
             "int8": "int8",
         }[self.case_config.quantization_type]
 
+        # filter runs (label field on): fast-search gives the int filter (id >= v) a sorted dictionary instead of a scan
+        # of every document, like the indexes the other DBs have on that field. The filter result is the same.
+        filtering = self.with_scalar_labels or self.case_config.label_field
         fields = [
             Field(
                 "id",
                 "int",
                 indexing=["summary", "attribute"],
+                **({"attribute": ["fast-search"]} if filtering else {}),
             ),
             Field(
                 "embedding",
@@ -227,6 +269,10 @@ class Vespa(VectorDB):
                 ann=HNSW(**self.case_config.index_param()),
             ),
         ]
+
+        if self.with_scalar_labels or self.case_config.label_field:
+            # exact-match label filter; fast-search builds a dictionary so the filter is not a full attribute scan
+            fields.append(Field("label", "string", indexing=["summary", "attribute"], attribute=["fast-search"]))
 
         if self.case_config.quantization_type == "binary":
             fields.append(
@@ -261,25 +307,30 @@ class Vespa(VectorDB):
                     rank_profiles=[
                         RankProfile(
                             name="none",
-                            first_phase="",
+                            first_phase="closeness(field, embedding)",
                             inherits="default",
                             inputs=[("query(query_embedding)", f"tensor<float>(x[{self.dim}])")],
                         ),
                         RankProfile(
                             name="binary",
-                            first_phase="",
+                            # the packed field only exists in binary schemas; other schemas keep this (unused) profile valid
+                            first_phase=(
+                                "closeness(field, embedding_binary)"
+                                if self.case_config.quantization_type == "binary"
+                                else "closeness(field, embedding)"
+                            ),
                             inherits="default",
                             inputs=[("query(query_embedding)", f"tensor<int8>(x[{math.ceil(self.dim / 8)}])")],
                         ),
                         RankProfile(
                             name="bfloat16",
-                            first_phase="",
+                            first_phase="closeness(field, embedding)",
                             inherits="default",
                             inputs=[("query(query_embedding)", f"tensor<bfloat16>(x[{self.dim}])")],
                         ),
                         RankProfile(
                             name="int8",
-                            first_phase="",
+                            first_phase="closeness(field, embedding)",
                             inherits="default",
                             inputs=[("query(query_embedding)", f"tensor<int8>(x[{self.dim}])")],
                         ),

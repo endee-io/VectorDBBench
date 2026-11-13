@@ -63,6 +63,15 @@ class RedisHNSWTypedDict(CommonTypedDict, RedisTypedDict, HNSWFlavor2):
             help="Vector field storage type",
         ),
     ]
+    hybrid_policy: Annotated[
+        str | None,
+        click.option("--hybrid-policy", type=click.Choice(["ADHOC_BF", "BATCHES"], case_sensitive=False), default=None,
+                     help="Filtered KNN mode (default: chosen by Redis)"),
+    ]
+    batch_size: Annotated[
+        int | None,
+        click.option("--batch-size", type=int, default=None, help="BATCH_SIZE for the BATCHES hybrid policy"),
+    ]
 
 
 @cli.command()
@@ -86,6 +95,8 @@ def Redis(**parameters: Unpack[RedisHNSWTypedDict]):
             M=parameters["m"],
             efConstruction=parameters["ef_construction"],
             ef=parameters["ef_runtime"],
+            hybrid_policy=parameters["hybrid_policy"].upper() if parameters["hybrid_policy"] else None,
+            batch_size=parameters["batch_size"],
             vector_type=parameters["vector_type"].upper(),
         ),
         **parameters,

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from typing import Any
 
+import numpy as np
 from pymilvus import DataType, MilvusClient, MilvusException
 
 from vectordb_bench.backend.filter import Filter, FilterOp
@@ -84,6 +85,7 @@ class Milvus(VectorDB):
                 "FLOAT32": DataType.FLOAT_VECTOR,
                 "FLOAT16": DataType.FLOAT16_VECTOR,
                 "BFLOAT16": DataType.BFLOAT16_VECTOR,
+                "INT8": DataType.INT8_VECTOR,
             }[getattr(self.case_config, "vector_dtype", "FLOAT32")]
             schema.add_field(self._vector_field, vector_dtype, dim=dim)
 
@@ -319,8 +321,21 @@ class Milvus(VectorDB):
         if self.case_config.is_gpu_index:
             log.info("current gpu_index only supports IP / L2, cosine dataset need normalize.")
             return True
+        if getattr(self.case_config, "cosine_via_ip", False):
+            log.info("cosine_via_ip: vectors are L2-normalised by the client and searched with metric IP.")
+            return True
 
         return False
+
+    def _to_field_vector(self, v):
+        """INT8_VECTOR fields need int8 numpy arrays; every other field type takes the float list unchanged."""
+        if getattr(self.case_config, "vector_dtype", "FLOAT32") != "INT8":
+            return v
+        max_abs = getattr(self.case_config, "int8_max_abs", None)
+        if not max_abs:
+            msg = "vector_dtype INT8 needs int8_max_abs (largest |component| of the dataset), e.g. --int8-max-abs 5.5046"
+            raise ValueError(msg)
+        return np.clip(np.rint(np.asarray(v, dtype=np.float32) * (127.0 / max_abs)), -127, 127).astype(np.int8)
 
     def insert_embeddings(
         self,
@@ -342,7 +357,7 @@ class Milvus(VectorDB):
                     row = {
                         self._primary_field: metadata[i],
                         self._scalar_id_field: metadata[i],
-                        self._vector_field: embeddings[i],
+                        self._vector_field: self._to_field_vector(embeddings[i]),
                     }
                     if tenant_labels_data is not None:
                         row[self._multitenant_partition_key_field] = tenant_labels_data[i]
@@ -411,9 +426,13 @@ class Milvus(VectorDB):
 
         search_kwargs = {
             "collection_name": self.collection_name,
-            "data": [query],
+            "data": [self._to_field_vector(query)],
             "anns_field": self._vector_field,
-            "search_params": self.case_config.search_param(),
+            "search_params": (
+                {**self.case_config.search_param(), "hints": "iterative_filter"}
+                if getattr(self.case_config, "iterative_filter", False) and expr
+                else self.case_config.search_param()
+            ),
             "limit": k,
             "filter": expr,
             "output_fields": output_fields,

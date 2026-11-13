@@ -38,6 +38,10 @@ class RedisHNSWConfig(RedisIndexConfig, DBCaseConfig):
     efConstruction: int
     ef: int | None = None
     index: IndexType = IndexType.HNSW
+    # filtered KNN execution mode (Redis docs, runtime query parameters): None = Redis chooses automatically,
+    # "ADHOC_BF" = exact brute force over the documents that pass the filter, "BATCHES" = paged HNSW batches
+    hybrid_policy: str | None = None
+    batch_size: int | None = None
 
     def index_param(self) -> dict:
         return {

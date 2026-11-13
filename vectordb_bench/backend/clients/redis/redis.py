@@ -13,6 +13,8 @@ except ImportError:  # older redis-py
     from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
+from vectordb_bench.backend.filter import Filter, FilterOp
+
 from ..api import DBCaseConfig, VectorDB
 
 log = logging.getLogger(__name__)
@@ -32,7 +34,18 @@ def encode_vector(vec: list[float], vector_type: str) -> bytes:
     return arr.tobytes()
 
 
+def _escape_tag(value: str) -> str:
+    """Escape a TAG query value: every character that is not a letter, digit or underscore gets a backslash."""
+    return "".join(c if c.isalnum() or c == "_" else f"\\{c}" for c in value)
+
+
 class Redis(VectorDB):
+    supported_filter_types: list[FilterOp] = [
+        FilterOp.NonFilter,
+        FilterOp.NumGE,
+        FilterOp.StrEqual,
+    ]
+
     def __init__(
         self,
         dim: int,
@@ -40,9 +53,13 @@ class Redis(VectorDB):
         db_case_config: DBCaseConfig,
         drop_old: bool = False,
         collection_name: str | None = None,  # task_runner passes the --collection-name value here
+        with_scalar_labels: bool = False,
         **kwargs,
     ):
         self.db_config = db_config
+        # label-filter cases: index a TAG field "label" (only then, so the unfiltered index stays unchanged)
+        self.with_scalar_labels = with_scalar_labels
+        self.filter_prefix = "*"
         self.case_config = db_case_config
         # --collection-name: index name. The default "index" keeps the legacy layout (bare integer keys, no prefix).
         # Any other name gets its own key prefix so several indexes can live side by side without indexing each other's hashes.
@@ -78,9 +95,11 @@ class Redis(VectorDB):
             # check to see if index exists
             conn.ft(self.index_name).info()
         except Exception:
+            label_fields = (TagField("label"),) if self.with_scalar_labels else ()
             schema = (
                 TagField("id"),
                 NumericField("metadata"),
+                *label_fields,
                 VectorField(
                     "vector",  # Vector Field Name
                     "HNSW",  # Vector Index Type: FLAT or HNSW
@@ -142,6 +161,7 @@ class Redis(VectorDB):
         self,
         embeddings: list[list[float]],
         metadata: list[int],
+        labels_data: list[str] | None = None,
         **kwargs: Any,
     ) -> tuple[int, Exception]:
         """Insert embeddings into the database.
@@ -152,14 +172,14 @@ class Redis(VectorDB):
         try:
             with self.conn.pipeline(transaction=False) as pipe:
                 for i, embedding in enumerate(embeddings):
-                    pipe.hset(
-                        f"{self._key_prefix}{metadata[i]}",
-                        mapping={
-                            "id": str(metadata[i]),
-                            "metadata": metadata[i],
-                            "vector": encode_vector(embedding, self.case_config.vector_type),
-                        },
-                    )
+                    mapping = {
+                        "id": str(metadata[i]),
+                        "metadata": metadata[i],
+                        "vector": encode_vector(embedding, self.case_config.vector_type),
+                    }
+                    if self.with_scalar_labels and labels_data is not None:
+                        mapping["label"] = labels_data[i]
+                    pipe.hset(f"{self._key_prefix}{metadata[i]}", mapping=mapping)
                     # Execute the pipe so we don't keep too much in memory at once
                     if i % batch_size == 0:
                         _ = pipe.execute()
@@ -171,11 +191,23 @@ class Redis(VectorDB):
 
         return result_len, None
 
+    def prepare_filter(self, filters: Filter):
+        """VectorDBBench filters: NumGE = id >= int_value (inclusive), StrEqual = label == label_value.
+        Used as the pre-filter of the KNN query (Redis hybrid query)."""
+        if filters.type == FilterOp.NonFilter:
+            self.filter_prefix = "*"
+        elif filters.type == FilterOp.NumGE:
+            self.filter_prefix = f"(@metadata:[{int(filters.int_value)} +inf])"
+        elif filters.type == FilterOp.StrEqual:
+            self.filter_prefix = f"(@label:{{{_escape_tag(str(filters.label_value))}}})"
+        else:
+            msg = f"Not support Filter for Redis - {filters}"
+            raise ValueError(msg)
+
     def search_embedding(
         self,
         query: list[float],
         k: int = 100,
-        filters: dict | None = None,
         timeout: int | None = None,
         **kwargs: Any,
     ) -> list[int]:
@@ -183,48 +215,23 @@ class Redis(VectorDB):
 
         query_vector = encode_vector(query, self.case_config.vector_type)
         ef_runtime = self.case_config.search_param()["params"]["ef"]
+        policy = ""
+        hp = getattr(self.case_config, "hybrid_policy", None)
+        if hp and self.filter_prefix != "*":  # the hybrid policy only applies to filtered queries
+            policy = f" HYBRID_POLICY {hp}"
+            if hp == "BATCHES" and getattr(self.case_config, "batch_size", None):
+                policy += f" BATCH_SIZE {int(self.case_config.batch_size)}"
+        # ADHOC_BF = exact brute force over the filtered documents: Redis rejects EF_RUNTIME there
+        # (SEARCH_ADHOC_EF_RUNTIME_IRRELEVANT), so only the HNSW paths get EF_RUNTIME
+        ef_part = "" if hp == "ADHOC_BF" and policy else f" EF_RUNTIME {ef_runtime}"
         query_obj = (
-            Query(f"*=>[KNN {k} @vector $vec EF_RUNTIME {ef_runtime} as score]")
+            Query(f"{self.filter_prefix}=>[KNN {k} @vector $vec{ef_part}{policy} as score]")
             .sort_by("score")
             .return_fields("id", "score")
             .paging(0, k)
             .dialect(2)
         )
         query_params = {"vec": query_vector}
-
-        if filters:
-            # benchmark test filters of format: {'metadata': '>=10000', 'id': 10000}
-            # gets exact match for id, and range for metadata if they exist in filters
-            id_value = filters.get("id")
-            metadata_value = filters.get("metadata")
-            if id_value and metadata_value:
-                query_obj = (
-                    Query(
-                        f"(@metadata:[{metadata_value} +inf] @id:{ {id_value} })=>[KNN {k} ",
-                        f"@vector $vec EF_RUNTIME {ef_runtime} as score]",
-                    )
-                    .sort_by("score")
-                    .return_fields("id", "score")
-                    .paging(0, k)
-                    .dialect(2)
-                )
-            elif id_value:
-                # gets exact match for id
-                query_obj = (
-                    Query(f"@id:{ {id_value} }=>[KNN {k} @vector $vec EF_RUNTIME {ef_runtime} as score]")
-                    .sort_by("score")
-                    .return_fields("id", "score")
-                    .paging(0, k)
-                    .dialect(2)
-                )
-            else:  # metadata only case, greater than or equal to metadata value
-                query_obj = (
-                    Query(f"@metadata:[{metadata_value} +inf]=>[KNN {k} @vector $vec EF_RUNTIME {ef_runtime} as score]")
-                    .sort_by("score")
-                    .return_fields("id", "score")
-                    .paging(0, k)
-                    .dialect(2)
-                )
         res = self.conn.ft(self.index_name).search(query_obj, query_params)
         # doc in res of format {'id': '9831', 'payload': None, 'score': '1.19209289551e-07'}
         # doc.id is the Redis key: "<id>" for the default index, "<collection>:<id>" for a named one (--collection-name)
