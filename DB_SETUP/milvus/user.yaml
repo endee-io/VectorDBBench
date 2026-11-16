@@ -1,0 +1,9 @@
+# Extra Milvus settings: mounted as /milvus/configs/user.yaml and applied on top of the image's milvus.yaml.
+# Empty = Milvus defaults (what all our benchmarks used). Restart Milvus after a change.
+#
+# Example: allow bigger segments (default 1024 MB), so a 1M float32 collection (~3 GB of vectors) ends up in
+# one segment instead of two:
+#
+# dataCoord:
+#   segment:
+#     maxSize: 4096

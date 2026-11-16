@@ -1,0 +1,19 @@
+# Runtime image for a source-built Redis (core + bundled modules).
+# Build context = the staged install tree produced by scripts/build-redis.sh
+# Base matches the build container (Ubuntu 24.04) so module .so ABI matches.
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates libssl3 libzstd1 zlib1g libstdc++6 tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r redis && useradd -r -g redis redis \
+    && mkdir -p /data /etc/redis && chown redis:redis /data
+COPY usr/local/ /usr/local/
+COPY --chmod=644 redis-full.conf /etc/redis/redis.conf
+# Container-friendly overrides (same effect as the official image's defaults)
+RUN sed -i -e 's/^bind .*/bind 0.0.0.0 -::*/' \
+           -e 's/^protected-mode yes/protected-mode no/' \
+           -e 's/^dir .*/dir \/data/' /etc/redis/redis.conf
+WORKDIR /data
+USER redis
+EXPOSE 6379
+CMD ["redis-server", "/etc/redis/redis.conf"]

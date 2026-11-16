@@ -1,0 +1,18 @@
+# Vespa - settings in ../db.env. Serves nothing until an application package is deployed (port 19071).
+services:
+  vespa:
+    container_name: vespa
+    image: ${VESPA_IMAGE}
+    hostname: vespa-container
+    ports:
+      - "127.0.0.1:8080:8080"     # query / document API
+      - "${BIND_IP}:8080:8080"
+      - "127.0.0.1:19071:19071"   # config server (deploy application packages here)
+      - "${BIND_IP}:19071:19071"
+    volumes:
+      # named volumes: Vespa runs as an unprivileged user and crashes on bind-mounted folders it can't own
+      - vespa-var:/opt/vespa/var
+      - vespa-logs:/opt/vespa/logs
+volumes:
+  vespa-var:
+  vespa-logs:

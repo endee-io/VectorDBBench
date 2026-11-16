@@ -1,0 +1,14 @@
+# Redis 8 (includes vector search: Query Engine FT.* and Vector Sets) - settings in ../db.env
+services:
+  redis:
+    container_name: redis
+    image: ${REDIS_IMAGE}
+    # password always on (2026-11-10: an unauthenticated instance was attacked from the internet)
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--save", "${REDIS_SAVE}"]
+    environment:
+      REDISCLI_AUTH: "${REDIS_PASSWORD}"   # lets "docker exec redis redis-cli ..." (db.sh, smoke-test.sh) authenticate
+    ports:
+      - "127.0.0.1:6379:6379"
+      - "${BIND_IP}:6379:6379"
+    volumes:
+      - ./volumes/redis:/data

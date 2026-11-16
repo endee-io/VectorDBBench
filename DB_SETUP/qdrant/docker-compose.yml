@@ -1,0 +1,15 @@
+# Qdrant - settings in ../db.env (started by ../db.sh, which passes --env-file ../db.env)
+services:
+  qdrant:
+    container_name: qdrant
+    image: ${QDRANT_IMAGE}
+    ports:
+      - "127.0.0.1:6333:6333"     # REST
+      - "${BIND_IP}:6333:6333"
+      - "127.0.0.1:6334:6334"     # gRPC
+      - "${BIND_IP}:6334:6334"
+    volumes:
+      - ./volumes/qdrant:/qdrant/storage
+      - ./volumes/snapshots:/qdrant/snapshots   # collection snapshots (backup / restore), kept when the container is removed
+    ulimits:
+      nofile: { soft: "${QDRANT_NOFILE}", hard: "${QDRANT_NOFILE}" }

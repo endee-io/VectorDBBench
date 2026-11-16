@@ -1,0 +1,16 @@
+schema doc {
+  document doc {
+    field id type int {
+      indexing: attribute | summary
+    }
+    field embedding type tensor<float>(x[4]) {
+      indexing: attribute | index
+      attribute { distance-metric: angular }
+      index { hnsw { max-links-per-node: 16  neighbors-to-explore-at-insert: 200 } }
+    }
+  }
+  rank-profile closeness {
+    inputs { query(q) tensor<float>(x[4]) }
+    first-phase { expression: closeness(field, embedding) }
+  }
+}
