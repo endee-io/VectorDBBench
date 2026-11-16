@@ -1,12 +1,12 @@
 #!/bin/bash
 
-NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/User/vectordataset" \
+NUM_PER_BATCH=1000 DATASET_LOCAL_DIR="/home/launchx/vectordataset" \
 vectordbbench endee \
-  --token "TOKEN" \
-  --region location \
-  --base-url "http://127.0.0.1:8080/api/v2" \
+  --token "radxa_benchmark:ndH3I4a4HrWzDIblkQPf4dn53x4hOBA7" \
+  --region bellandur \
+  --base-url "http://172.16.23.51:8080/api/v2" \
   --collection-name 1M_index \
-  --task-label "task_detail" \
+  --task-label "1M_run5_reboot" \
   --m 16 \
   --ef-con 128 \
   --ef-search 128 \
@@ -14,11 +14,11 @@ vectordbbench endee \
   --precision int16 \
   --case-type Performance768D1M \
   --k 30 \
-  --num-concurrency "8" \
+  --num-concurrency "16" \
   --concurrency-duration 30 \
   --concurrency-timeout 3600 \
-  --drop-old \
-  --load \
+  --skip-drop-old \
+  --skip-load \
   --search-concurrent \
   --search-serial
 
