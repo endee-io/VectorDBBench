@@ -14,11 +14,14 @@ Examples (on the client, inside the VectorDBBench venv):
   python run_qdrant_benchmark_with_ram_and_temp_with_sudo_reboot.py --size 4M --datatype turbo16 --check
   python run_qdrant_benchmark_with_ram_and_temp_with_sudo_reboot.py --help
 
---size: 500K and 1M use VectorDBBench's built-in datasets (Performance1536D500K, Performance768D1M); other
-sizes use the custom dataset custom_768d_<n> (PerformanceCustomDataset).
+--size: 500K, 1M and 10M use VectorDBBench's built-in datasets (Performance1536D500K, Performance768D1M,
+Performance768D10M = Cohere 10M); other sizes use the custom dataset custom_768d_<n> (PerformanceCustomDataset).
 --datatype: passed to VectorDBBench as is, so any datatype your Qdrant build supports works. KNOWN_DATATYPES
 (below) only drives the default names and the disk estimate; add new ones there (name -> bytes per value).
 --quantization: passed as is (default none); KNOWN_QUANTIZATIONS works the same way.
+--on-disk: store the vectors and the HNSW index on disk (memory-mapped) instead of in RAM (VectorDBBench's
+--on-disk true). Off by default, as in VectorDBBench. Needed when the vectors do not fit in RAM (e.g. 10M on
+the Radxa). On-disk collections get their own name and labels (...Disk, _ondisk).
 Every datatype/quantization gets its own collection name by default (VectorDBBench768D1MTurbo16, ...), and
 Qdrant keeps several collections side by side, so loading one does not remove another.
 
@@ -58,6 +61,7 @@ from datetime import datetime
 # --- Qdrant / benchmark ---
 QDRANT_URL = "http://172.16.23.51:6333"      # --url for vectordbbench (REST port; gRPC is 6334)
 PREFER_GRPC = "true"                          # --prefer-grpc (flag --prefer-grpc / --no-grpc)
+ON_DISK = False                               # --on-disk: vectors + HNSW index on disk (VectorDBBench --on-disk true)
 DATASET_LOCAL_DIR = "/home/launchx/vectordataset"
 DEFAULT_SIZE = "1M"
 DEFAULT_K = 30
@@ -80,6 +84,7 @@ OPTIMIZE_TIMEOUT = 360000
 BUILTIN_CASES = {
     "500K": {"case_type": "Performance1536D500K", "dim": 1536, "dataset_dir": "openai/openai_medium_500k"},
     "1M": {"case_type": "Performance768D1M", "dim": 768, "dataset_dir": "cohere/cohere_medium_1m"},
+    "10M": {"case_type": "Performance768D10M", "dim": 768, "dataset_dir": "cohere/cohere_large_10m"},
 }
 CUSTOM_DIM = 768
 
@@ -96,6 +101,7 @@ QUANTIZATION = DEFAULT_QUANTIZATION
 K = DEFAULT_K
 EF_SEARCH = HNSW_EF
 TASK_LABEL = None
+DB_LABEL = None                               # --db-label (optional, passed to VectorDBBench)
 
 # --- Server ---
 SERVER_SSH = "radxa@172.16.23.51"
@@ -108,7 +114,7 @@ DISK_FACTOR = 2.0                             # rough disk estimate = raw vector
 REBOOT_TIMEOUT = 900
 POST_REBOOT_SETTLE = 60
 QDRANT_READY_TIMEOUT = 1800
-GREEN_TIMEOUT = 7200                          # wait at most this long for the collection to become green
+GREEN_TIMEOUT = 86400                         # wait at most this long for the collection to become green
 POST_REBOOT_COMMANDS = []
 
 # --- RAM settle after load ---
@@ -213,9 +219,9 @@ def _ram_shell_script():
     return (
         f"docker top {DB_CONTAINER} -eo pid,comm 2>/dev/null | awk 'NR>1 {{print $1, $2}}' | "
         "while read pid comm; do [ -r /proc/$pid/status ] || continue; "
-        "awk -v p=$pid -v c=$comm '/^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem):/ {v[$1]=$2} "
+        "awk -v p=$pid -v c=$comm '/^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem|VmSwap):/ {v[$1]=$2} "
         "END {print \"PROC\", p, c, v[\"VmRSS:\"]+0, v[\"VmHWM:\"]+0, v[\"RssAnon:\"]+0, v[\"RssFile:\"]+0, "
-        "v[\"RssShmem:\"]+0}' /proc/$pid/status; done\n"
+        "v[\"RssShmem:\"]+0, v[\"VmSwap:\"]+0}' /proc/$pid/status; done\n"
         "free -b | awk '/^Mem:/ {print \"SYS_TOTAL\", $2; print \"SYS_USED\", $3; "
         "print \"SYS_BUFF_CACHE\", $6; print \"SYS_AVAILABLE\", $7}'\n"
         "free -b | awk '/^Swap:/ {print \"SYS_SWAP_USED\", $3}'\n"
@@ -244,10 +250,13 @@ def parse_ram_output(stdout):
         parts = line.split()
         if not parts:
             continue
-        if parts[0] == "PROC" and len(parts) == 8:
-            pid, comm, rss, hwm, anon, file_, shmem = parts[1], parts[2], *map(int, parts[3:])
+        if parts[0] == "PROC" and len(parts) in (8, 9):
+            pid, comm = parts[1], parts[2]
+            rss, hwm, anon, file_, shmem = map(int, parts[3:8])
+            swap = int(parts[8]) * 1024 if len(parts) == 9 else None
             procs.append({"pid": pid, "comm": comm, "res": rss * 1024, "peak_res": hwm * 1024,
-                          "private": anon * 1024, "shared": (file_ + shmem) * 1024})
+                          "private": anon * 1024, "shared": (file_ + shmem) * 1024, "swap": swap,
+                          "private_plus_swap": anon * 1024 + (swap or 0)})
         elif parts[0] in keys and len(parts) == 2:
             r[keys[parts[0]]] = float(parts[1])
         elif line.startswith("DOCKER_MEM "):
@@ -260,7 +269,8 @@ def parse_ram_output(stdout):
     nodes = [p for p in procs if p["comm"].startswith(MAIN_PROCESS)]
     node = max(nodes, key=lambda p: p["res"]) if nodes else None
     r["node"] = node
-    r["total"] = {key: sum(p[key] for p in procs) for key in ("res", "private", "shared")}
+    r["total"] = {key: sum(p[key] or 0 for p in procs)
+                  for key in ("res", "private", "shared", "swap", "private_plus_swap")}
     r["procs"] = sorted(procs, key=lambda p: p["res"], reverse=True)
     return r
 
@@ -283,9 +293,12 @@ def ram_columns(stage, r):
         f"qdrant_private_{stage}_gib": ram_value(r, "node", "private"),
         f"qdrant_shared_{stage}_gib": ram_value(r, "node", "shared"),
         f"qdrant_peak_res_{stage}_gib": ram_value(r, "node", "peak_res"),
+        f"qdrant_swap_{stage}_gib": ram_value(r, "node", "swap"),
+        f"qdrant_private_plus_swap_{stage}_gib": ram_value(r, "node", "private_plus_swap"),
         f"container_total_res_{stage}_gib": ram_value(r, "total", "res"),
         f"container_total_private_{stage}_gib": ram_value(r, "total", "private"),
         f"container_total_shared_{stage}_gib": ram_value(r, "total", "shared"),
+        f"container_total_swap_{stage}_gib": ram_value(r, "total", "swap"),
         f"docker_mem_{stage}_gib": ram_value(r, None, "docker_mem"),
         f"board_used_{stage}_gib": ram_value(r, None, "sys_used"),
         f"board_buff_cache_{stage}_gib": ram_value(r, None, "sys_buff_cache"),
@@ -299,7 +312,7 @@ def describe_ram(r):
         return "RAM unavailable"
     node = r["node"]
     node_text = (f"qdrant RES {gib(node['res'])} GiB = private {gib(node['private'])} + shared "
-                 f"{gib(node['shared'])}" if node else "qdrant process NOT FOUND")
+                 f"{gib(node['shared'])} (+ {gib(node['swap'])} in swap)" if node else "qdrant process NOT FOUND")
     top = ", ".join(f"{p['comm']} {gib(p['res'])}" for p in r["procs"][:4])
     return (f"{node_text} | all container processes RES {gib(r['total']['res'])} (private "
             f"{gib(r['total']['private'])}) [largest: {top}] | docker {gib(r['docker_mem'])} | board used "
@@ -688,13 +701,18 @@ def summary_header_rows(s):
          "not loaded in this run (--search-only)"),
         ("Datatype:", DATATYPE, None),
         ("Quantization:", QUANTIZATION, None),
+        ("On disk:", "yes" if ON_DISK else "no", "vectors + HNSW index memory-mapped" if ON_DISK else "vectors in RAM"),
         ("Data Dir Size:", s["dir_h"], f"{s['dir_gib']} GiB, du -sh {s['dir_path']}" if s["dir_h"] else None),
         ("Collection RAM (GiB):", None, "n/a: Qdrant has no per-collection memory API"),
         ("Process RES (GiB):", ram_value(ram, "node", "res"), "qdrant process"),
         ("Process private (GiB):", ram_value(ram, "node", "private"), "RES - SHR"),
         ("Process shared / file-backed (GiB):", ram_value(ram, "node", "shared"), "SHR (memory-mapped segments)"),
+        ("Process swap (GiB):", ram_value(ram, "node", "swap"), "VmSwap: moved to swap, not counted in RES"),
+        ("Process private + swap (GiB):", ram_value(ram, "node", "private_plus_swap"),
+         "memory that cannot be dropped"),
         ("Board used (GiB):", ram_value(ram, None, "sys_used"), "free's used (total - available)"),
         ("Board available (GiB):", ram_value(ram, None, "sys_available"), None),
+        ("Board swap used (GiB):", ram_value(ram, None, "sys_swap_used"), "free: swap used by all processes"),
         ("RAM measured:", s["ram_when"], None),
     ]
 
@@ -763,7 +781,7 @@ def write_summary_xlsx(path, title, header_rows, results):
     detail = ["Run Count", "Round", "After reboot", "Temp at start (C)", "Max temp during search (C)",
               "Lowest big-core MHz", "Governor", "Concurrent p99 (s)", "Concurrent p95 (s)",
               "Qdrant RES after (GiB)", "All container RES after (GiB)", "Board available after (GiB)",
-              "Swap used after (GiB)"]
+              "Swap used after (GiB)", "Qdrant swap after (GiB)"]
     for col, name in enumerate(detail, start=1):
         c = ds.cell(1, col, name)
         c.font, c.fill = head_font, head_fill
@@ -772,7 +790,8 @@ def write_summary_xlsx(path, title, header_rows, results):
         for col, value in enumerate([r["run_count"], r["round"], "yes" if r["round"] > 1 else "no",
                                      r["temp_start"], r["temp_max"], r["min_big_mhz"], r["governor"],
                                      r["conc_p99"], r["conc_p95"], r["node_res_after"], r["total_res_after"],
-                                     r["available_after"], r["swap_after"]], start=1):
+                                     r["available_after"], r["swap_after"],
+                                     r.get("node_swap_after")], start=1):
             ds.cell(i, col, value).font = font
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp.xlsx"
@@ -803,6 +822,8 @@ def build_command(load, label):
         "--quantization", QUANTIZATION,
         "--datatype", DATATYPE,
     ]
+    if ON_DISK:
+        cmd += ["--on-disk", "true"]
     if CASE_TYPE:
         cmd += ["--case-type", CASE_TYPE]
     else:
@@ -822,6 +843,8 @@ def build_command(load, label):
             "--concurrency-duration", str(CONCURRENCY_DURATION),
             "--concurrency-timeout", "3600",
             "--task-label", label]
+    if DB_LABEL:
+        cmd += ["--db-label", DB_LABEL]
     if load:
         cmd += ["--drop-old", "--load", "--skip-search-serial", "--skip-search-concurrent"]
     else:
@@ -926,6 +949,8 @@ def parse_args(argv):
     p.add_argument("--quantization", default=DEFAULT_QUANTIZATION,
                    help=f"e.g. {', '.join(KNOWN_QUANTIZATIONS)} (default %(default)s; passed as is)")
     p.add_argument("--no-grpc", action="store_true", help="use REST instead of gRPC (--prefer-grpc false)")
+    p.add_argument("--on-disk", action="store_true",
+                   help="store vectors and the HNSW index on disk instead of RAM (VectorDBBench --on-disk true)")
     p.add_argument("--k", type=int, default=DEFAULT_K, help="top-k (default %(default)s)")
     p.add_argument("--hnsw-ef", type=int, default=HNSW_EF, help="search ef (default %(default)s)")
     p.add_argument("--search-only", action="store_true", help="collection already loaded: only search")
@@ -933,9 +958,11 @@ def parse_args(argv):
     p.add_argument("--reboots", type=int, default=0,
                    help="after each round: docker stop qdrant, reboot the server, docker start qdrant, then another "
                         "round (default 0)")
-    p.add_argument("--collection", help="collection name (default VectorDBBench<dim>D<size><Datatype>[<Quant>])")
-    p.add_argument("--dataset", help="custom dataset name (500K and 1M use built-in datasets unless given)")
-    p.add_argument("--label", help="task label (default qdrant_<size>_<datatype>[_<quant>]_k<k>[_search-only]_run<N>)")
+    p.add_argument("--collection", help="collection name (default VectorDBBench<dim>D<size><Datatype>[<Quant>][Disk])")
+    p.add_argument("--dataset", help="custom dataset name (500K, 1M and 10M use built-in datasets unless given)")
+    p.add_argument("--db-label", help="VectorDBBench --db-label (optional)")
+    p.add_argument("--label", help="task label (default qdrant_<size>_<datatype>[_<quant>][_ondisk]_k<k>"
+                                   "[_search-only]_run<N>)")
     p.add_argument("--log", help="log file (default ~/benchmark_logs/<label>.log)")
     p.add_argument("--no-log-file", action="store_true")
     p.add_argument("--force", action="store_true", help="--search-only: search even if the count differs")
@@ -945,7 +972,7 @@ def parse_args(argv):
 
 def apply_settings(args):
     global CASE_TYPE, DATASET_DIM, DATASET_DIR, DATASET_NAME, DATASET_SIZE, CUSTOM_CASE_NAME
-    global COLLECTION_NAME, DATATYPE, QUANTIZATION, K, EF_SEARCH, TASK_LABEL, PREFER_GRPC
+    global COLLECTION_NAME, DATATYPE, QUANTIZATION, K, EF_SEARCH, TASK_LABEL, PREFER_GRPC, DB_LABEL, ON_DISK
     m = re.fullmatch(r"(\d+)\s*([KkMm])", args.size.strip())
     if not m:
         sys.exit(f"--size must look like 500K, 1M or 4M (got {args.size!r})")
@@ -959,6 +986,8 @@ def apply_settings(args):
     DATATYPE, QUANTIZATION = args.datatype, args.quantization
     K, EF_SEARCH = args.k, args.hnsw_ef
     PREFER_GRPC = "false" if args.no_grpc else "true"
+    DB_LABEL = args.db_label
+    ON_DISK = args.on_disk
     builtin = BUILTIN_CASES.get(tag) if not args.dataset else None
     if builtin:
         CASE_TYPE, DATASET_DIM, DATASET_DIR = builtin["case_type"], builtin["dim"], builtin["dataset_dir"]
@@ -968,12 +997,15 @@ def apply_settings(args):
         DATASET_NAME = args.dataset or f"custom_768d_{tag.lower()}"
     CUSTOM_CASE_NAME = f"Custom {DATASET_DIM}D {tag}"
     quant_part = "" if QUANTIZATION == "none" else title_case(QUANTIZATION)
-    COLLECTION_NAME = args.collection or f"VectorDBBench{DATASET_DIM}D{tag}{title_case(DATATYPE)}{quant_part}"
+    disk_part = "Disk" if ON_DISK else ""
+    COLLECTION_NAME = (args.collection or
+                       f"VectorDBBench{DATASET_DIM}D{tag}{title_case(DATATYPE)}{quant_part}{disk_part}")
     if args.label:
         TASK_LABEL = args.label
     else:
         quant_label = "" if QUANTIZATION == "none" else f"_{QUANTIZATION}"
-        prefix = (f"qdrant_{tag}_{DATATYPE}{quant_label}_k{K}" + ("_rest" if args.no_grpc else "")
+        prefix = (f"qdrant_{tag}_{DATATYPE}{quant_label}" + ("_ondisk" if ON_DISK else "") + f"_k{K}"
+                  + ("_rest" if args.no_grpc else "")
                   + ("_search-only" if args.search_only else ""))
         TASK_LABEL = f"{prefix}_run{next_run_number(prefix)}"
 
@@ -988,7 +1020,8 @@ def warn_unknown_types():
 
 def run_checks(args):
     log(f"Checking Qdrant setup for {COLLECTION_NAME} (dataset {DATASET_NAME}, {DATASET_SIZE:,} x {DATASET_DIM}D, "
-        f"datatype {DATATYPE}, quantization {QUANTIZATION}, gRPC {PREFER_GRPC}, k={K}, hnsw_ef={EF_SEARCH})")
+        f"datatype {DATATYPE}, quantization {QUANTIZATION}, on disk {ON_DISK}, gRPC {PREFER_GRPC}, k={K}, "
+        f"hnsw_ef={EF_SEARCH})")
     log("VectorDBBench search command: " + " ".join(build_command(load=False, label=TASK_LABEL)))
     warn_unknown_types()
     log("Containers:")
@@ -1050,7 +1083,8 @@ def main():
     log("=" * 70)
     log(f"Run {TASK_LABEL}: Qdrant {mode} | {COLLECTION_NAME} ({DATASET_SIZE:,} x {DATASET_DIM}D, dataset "
         f"{DATASET_NAME}, case {CASE_TYPE or 'PerformanceCustomDataset'}) | datatype {DATATYPE}, quantization "
-        f"{QUANTIZATION}, gRPC {PREFER_GRPC} | k={K} hnsw_ef={EF_SEARCH} | {args.searches} searches x {rounds} "
+        f"{QUANTIZATION}, on disk {'yes' if ON_DISK else 'no'}, gRPC {PREFER_GRPC} | k={K} hnsw_ef={EF_SEARCH} | "
+        f"{args.searches} searches x {rounds} "
         f"round(s){', server restart between rounds' if args.reboots else ''}")
     log(f"Server {QDRANT_URL} | CSV {OUTPUT_CSV} | log {log_path or '(terminal only)'}")
 
@@ -1079,7 +1113,7 @@ def main():
     base = {
         "started": started, "task_label": TASK_LABEL, "db": "qdrant", "mode": mode, "collection": COLLECTION_NAME,
         "dataset": DATASET_NAME, "case_type": CASE_TYPE or "PerformanceCustomDataset", "size": DATASET_SIZE,
-        "dim": DATASET_DIM, "datatype": DATATYPE, "quantization": QUANTIZATION, "grpc": PREFER_GRPC, "m": M,
+        "dim": DATASET_DIM, "datatype": DATATYPE, "quantization": QUANTIZATION, "on_disk": ON_DISK, "grpc": PREFER_GRPC, "m": M,
         "ef_construct": EF_CONSTRUCT, "hnsw_ef": EF_SEARCH, "k": K, "concurrency": CONCURRENCY,
         "searches_per_round": args.searches, "reboots": args.reboots,
         **ram_columns("before_load" if not args.search_only else "at_start", ram_start),
@@ -1094,7 +1128,7 @@ def main():
 
     def save_summary():
         title = (f"Qdrant {COLLECTION_NAME} ({DATASET_SIZE:,} x {DATASET_DIM}D, {DATATYPE}, quantization "
-                 f"{QUANTIZATION}) | k={K}, hnsw_ef={EF_SEARCH}, M={M}, ef_construct={EF_CONSTRUCT}, "
+                 f"{QUANTIZATION}, {'on disk' if ON_DISK else 'in RAM'}) | k={K}, hnsw_ef={EF_SEARCH}, M={M}, ef_construct={EF_CONSTRUCT}, "
                  f"concurrency={CONCURRENCY}, gRPC {PREFER_GRPC} | {mode} | {TASK_LABEL} | {started}")
         try:
             summary["xlsx_written"] = write_summary_xlsx(xlsx_path, title, summary_header_rows(summary), results)
@@ -1202,6 +1236,7 @@ def main():
                 "total_res_after": ram_value(ram_after, "total", "res"),
                 "available_after": ram_value(ram_after, None, "sys_available"),
                 "swap_after": ram_value(ram_after, None, "sys_swap_used"),
+                "node_swap_after": ram_value(ram_after, "node", "swap"),
             })
             save_summary()
             log(f"   {tag}: saved to {OUTPUT_CSV}")

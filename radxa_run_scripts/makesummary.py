@@ -13,7 +13,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import run_benchmark_with_ram_and_temp_with_sudo_reboot as rb  # noqa: E402
+import run_benchmark_with_ram_and_temp as rb  # noqa: E402
 
 
 def num(value):
@@ -51,6 +51,9 @@ def rebuild(label, rows):
         "shared": num(first.get(f"endee_shared_mdbx_{stage}_gib")),
         "sys_used": num(first.get(f"board_used_{stage}_gib")),
         "sys_available": num(first.get(f"board_available_{stage}_gib")),
+        "swap": num(first.get(f"endee_swap_{stage}_gib")),
+        "private_plus_swap": num(first.get(f"endee_private_plus_swap_{stage}_gib")),
+        "sys_swap_used": num(first.get(f"swap_used_{stage}_gib")),
     }
     header_rows = rb.summary_header_rows(
         num(first.get("load_duration_s")), first.get("data_dir_size") or None, num(first.get("data_dir_gib")),
@@ -70,6 +73,8 @@ def rebuild(label, rows):
             "private_after": num(r.get("endee_private_after_search_gib")),
             "shared_after": num(r.get("endee_shared_mdbx_after_search_gib")),
             "available_after": num(r.get("board_available_after_search_gib")),
+            "swap_after": num(r.get("endee_swap_after_search_gib")),
+            "board_swap_after": num(r.get("swap_used_after_search_gib")),
         })
 
     size = num(first.get("size"))

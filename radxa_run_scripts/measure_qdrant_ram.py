@@ -22,7 +22,8 @@ the vector datatype / on-disk setting / quantization from its config, and the da
 collections/<name> in the storage folder). Qdrant has no per-collection memory API, so there is no
 "collection RAM" figure.
 Whole Qdrant (from /proc of the container's processes, same as the benchmark script):
-  qdrant process   RES, private (RES - SHR), shared / file-backed (memory-mapped segments)
+  qdrant process   RES, private (RES - SHR), shared / file-backed (memory-mapped segments), swap (VmSwap,
+                   not part of RES) and private + swap (the memory that cannot be dropped)
   all processes    sum over everything in the container
 Board (free): used (= total - available), available, buff/cache, swap used.
 
@@ -155,6 +156,8 @@ def main():
     print("\nFor the summary table (" + measured + "):")
     print(f"  Process RES / private / shared (GiB): {qb.ram_value(ram, 'node', 'res')} / "
           f"{qb.ram_value(ram, 'node', 'private')} / {qb.ram_value(ram, 'node', 'shared')}")
+    print(f"  Process swap / private + swap (GiB):  {qb.ram_value(ram, 'node', 'swap')} / "
+          f"{qb.ram_value(ram, 'node', 'private_plus_swap')}   (VmSwap is not counted in RES)")
     print(f"  Board used / available (GiB):         {qb.ram_value(ram, None, 'sys_used')} / "
           f"{qb.ram_value(ram, None, 'sys_available')}   (swap used {qb.ram_value(ram, None, 'sys_swap_used')})")
     print("  Collection RAM: n/a (Qdrant has no per-collection memory API)")

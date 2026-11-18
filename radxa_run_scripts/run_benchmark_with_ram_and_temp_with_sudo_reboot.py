@@ -14,7 +14,17 @@ Examples (run on the client, inside the VectorDBBench venv):
         k, collection, disk space, reboot permissions) without running anything
   python run_benchmark_with_ram_and_temp.py --help                          all options
 
---size N sets the collection (<N>_index), the dataset (custom_768d_<n>) and its size, e.g. 500K, 1M ... 7M.
+--size N sets the collection (<N>_index), the dataset and its size, e.g. 500K, 1M ... 8M, 10M.
+  500K, 1M and 10M use VectorDBBench's built-in datasets (BUILTIN_CASES):
+      500K -> --case-type Performance1536D500K (OpenAI 500K, 1536D)
+      1M   -> --case-type Performance768D1M   (Cohere 1M, 768D)
+      10M  -> --case-type Performance768D10M  (Cohere 10M, 768D; VectorDBBench allows 10 days each for its
+              load and optimize steps)
+  every other size uses the custom dataset custom_768d_<n> (--case-type PerformanceCustomDataset).
+--precision float32 | float16 | int16 | int8 | int8e (default int16) sets how vectors are stored. It only takes
+  effect when a collection is created (a load). Other precisions get their own collection name by default
+  (e.g. 4M_int8_index), so loading them never drops the int16 collection. With --search-only, the
+  collection's real precision is read from Endee and recorded; a different --precision stops the run.
 The output also goes to a log file automatically (~/benchmark_logs/<label>.log), so no redirect is needed.
 
 What a run does:
@@ -86,15 +96,28 @@ NUM_PER_BATCH = 1000
 M = 16
 EF_CON = 128
 SPACE_TYPE = "cosine"
-PRECISION = "int16"
+PRECISION = "int16"                  # --precision (default for loads)
+PRECISIONS = ("float32", "float16", "int16", "int8", "int8e")
+BYTES_PER_VALUE = {"float32": 4, "float16": 2, "int16": 2, "int8": 1, "int8e": 1}   # rough, for the disk estimate
 CONCURRENCY = 16
 CONCURRENCY_DURATION = 30
 COOLDOWN_BEFORE_EACH_SEARCH = True   # False = cool-down check only before the first search of a round
-DATASET_DIM = 768
 LOAD_TIMEOUT = 360000                # seconds
 OPTIMIZE_TIMEOUT = 360000            # seconds
 
+# Sizes that use one of VectorDBBench's built-in datasets instead of a custom one. dataset_dir is the folder
+# under DATASET_LOCAL_DIR with that dataset's parquet files (used for the pre-flight dataset / ground-truth check).
+BUILTIN_CASES = {
+    "500K": {"case_type": "Performance1536D500K", "dim": 1536, "dataset_dir": "openai/openai_medium_500k"},
+    "1M": {"case_type": "Performance768D1M", "dim": 768, "dataset_dir": "cohere/cohere_medium_1m"},
+    "10M": {"case_type": "Performance768D10M", "dim": 768, "dataset_dir": "cohere/cohere_large_10m"},
+}
+CUSTOM_DIM = 768                     # dimension of the custom_768d_<n> datasets
+
 # Set from --size / --collection / --dataset / --k / --label by apply_settings()
+CASE_TYPE = None                     # built-in case type (e.g. Performance768D1M), None = custom dataset
+DATASET_DIM = CUSTOM_DIM
+DATASET_DIR = None                   # dataset folder relative to DATASET_LOCAL_DIR
 COLLECTION_NAME = None               # e.g. 4M_index
 DATASET_NAME = None                  # e.g. custom_768d_4m  (folder DATASET_LOCAL_DIR/<name>/<name>)
 CUSTOM_CASE_NAME = None              # e.g. Custom 768D 4M
@@ -108,7 +131,7 @@ ENDEE_PROCESS_NAME = "ndd-neon"      # Endee server process name as htop shows i
 ENDEE_DOCKER_CONTAINER = "endee"     # `docker stats` is also recorded for this container; "" to skip
 ENDEE_DATA_DIR = "/home/radxa/data"  # where Endee keeps collections on the server (free-space check)
 ENDEE_COLLECTIONS_DIR = "/home/radxa/data/radxa_benchmark"  # one folder per collection (Data Dir Size)
-DISK_GIB_PER_MILLION = 2.4           # disk per 1M vectors (768D int16, M=16), from the 1M/2M collections
+DISK_GIB_PER_MILLION = 2.4           # disk per 1M vectors at 768D int16, M=16 (scaled by dim/768)
 NUM_PARALLEL_INSERTS = 8             # Endee server-side setting (constant), written into the Excel summary
 
 # --- Restart between rounds (--reboots) ---
@@ -230,9 +253,10 @@ def _ram_shell_script() -> str:
         f"PID=$(pgrep -o -x '{ENDEE_PROCESS_NAME}')\n"
         f"if [ -z \"$PID\" ]; then echo \"ERROR no process named '{ENDEE_PROCESS_NAME}'\"; exit 3; fi\n"
         "echo \"SOURCE pid $PID: $(ps -o args= -p $PID | cut -c1-120)\"\n"
-        "grep -E '^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem):' /proc/$PID/status\n"
+        "grep -E '^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem|VmSwap):' /proc/$PID/status\n"
         "free -b | awk '/^Mem:/ {print \"SYS_TOTAL\", $2; print \"SYS_USED\", $3; "
         "print \"SYS_BUFF_CACHE\", $6; print \"SYS_AVAILABLE\", $7}'\n"
+        "free -b | awk '/^Swap:/ {print \"SYS_SWAP_USED\", $3}'\n"
     )
     if ENDEE_DOCKER_CONTAINER:
         script += (f"docker stats --no-stream --format 'DOCKER_MEM {{{{.MemUsage}}}}' "
@@ -253,16 +277,18 @@ def _parse_size(text: str) -> float:
 
 
 _STATUS_KEYS = {"VmRSS": "res", "VmHWM": "peak_res", "RssAnon": "private",
-                "RssFile": "file", "RssShmem": "shmem"}
+                "RssFile": "file", "RssShmem": "shmem", "VmSwap": "swap"}
 _SYS_KEYS = {"SYS_TOTAL": "sys_total", "SYS_USED": "sys_used",
-             "SYS_BUFF_CACHE": "sys_buff_cache", "SYS_AVAILABLE": "sys_available"}
+             "SYS_BUFF_CACHE": "sys_buff_cache", "SYS_AVAILABLE": "sys_available",
+             "SYS_SWAP_USED": "sys_swap_used"}
 
 
 def parse_ram_output(stdout: str) -> dict:
     """Bytes for: res (htop RES), private (RES - SHR), shared (htop SHR: mostly mmap'd MDBX pages),
     peak_res, docker_mem, and the board's sys_used / sys_buff_cache / sys_available / sys_total."""
     r = {"source": None, "res": None, "peak_res": None, "private": None, "file": None, "shmem": None,
-         "docker_mem": None, "sys_total": None, "sys_used": None, "sys_buff_cache": None, "sys_available": None}
+         "docker_mem": None, "sys_total": None, "sys_used": None, "sys_buff_cache": None, "sys_available": None,
+         "swap": None, "sys_swap_used": None}
     for line in stdout.splitlines():
         if line.startswith("SOURCE "):
             r["source"] = line[len("SOURCE "):].strip()
@@ -274,7 +300,7 @@ def parse_ram_output(stdout: str) -> dict:
         elif line.split(" ")[0] in _SYS_KEYS:
             r[_SYS_KEYS[line.split()[0]]] = float(line.split()[1])
         else:
-            m = re.match(r"^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem):\s+(\d+)\s*kB", line)
+            m = re.match(r"^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem|VmSwap):\s+(\d+)\s*kB", line)
             if m:
                 r[_STATUS_KEYS[m.group(1)]] = int(m.group(2)) * 1024
     if r["res"] is None:
@@ -283,6 +309,9 @@ def parse_ram_output(stdout: str) -> dict:
         r["shared"] = (r["file"] or 0) + (r["shmem"] or 0)
     else:
         r["shared"] = None
+    # memory that cannot be dropped: private pages in RAM + pages moved to swap (VmSwap is not part of RES)
+    r["private_plus_swap"] = (None if r["private"] is None
+                              else r["private"] + (r["swap"] or 0))
     return r
 
 
@@ -305,10 +334,13 @@ def ram_columns(stage: str, r) -> dict:
         f"endee_private_{stage}_gib": ram_value(r, "private"),
         f"endee_shared_mdbx_{stage}_gib": ram_value(r, "shared"),
         f"endee_peak_res_{stage}_gib": ram_value(r, "peak_res"),
+        f"endee_swap_{stage}_gib": ram_value(r, "swap"),
+        f"endee_private_plus_swap_{stage}_gib": ram_value(r, "private_plus_swap"),
         f"docker_mem_{stage}_gib": ram_value(r, "docker_mem"),
         f"board_used_{stage}_gib": ram_value(r, "sys_used"),
         f"board_buff_cache_{stage}_gib": ram_value(r, "sys_buff_cache"),
         f"board_available_{stage}_gib": ram_value(r, "sys_available"),
+        f"swap_used_{stage}_gib": ram_value(r, "sys_swap_used"),
     }
 
 
@@ -316,9 +348,10 @@ def describe_ram(r) -> str:
     if r is None:
         return "RAM unavailable"
     return (f"Endee RES {gib(r['res'])} GiB = private {gib(r['private'])} + shared/MDBX {gib(r['shared'])}"
-            f" (peak RES {gib(r['peak_res'])}, docker {gib(r['docker_mem'])}) | board used {gib(r['sys_used'])},"
-            f" buff/cache {gib(r['sys_buff_cache'])}, available {gib(r['sys_available'])} of"
-            f" {gib(r['sys_total'])} GiB | {r['source']}")
+            f" (+ {gib(r.get('swap'))} in swap; peak RES {gib(r['peak_res'])}, docker {gib(r['docker_mem'])}) |"
+            f" board used {gib(r['sys_used'])}, buff/cache {gib(r['sys_buff_cache'])}, available"
+            f" {gib(r['sys_available'])} of {gib(r['sys_total'])} GiB, swap used {gib(r.get('sys_swap_used'))} |"
+            f" {r['source']}")
 
 
 def wait_for_ram_to_settle():
@@ -439,8 +472,12 @@ def log_server_activity():
 # CHECKS: dataset, ground truth, collection, disk, reboot setup
 # ============================================================
 def dataset_folder():
-    for folder in (os.path.join(DATASET_LOCAL_DIR, DATASET_NAME, DATASET_NAME),
-                   os.path.join(DATASET_LOCAL_DIR, DATASET_NAME)):
+    if CASE_TYPE:
+        candidates = (os.path.join(DATASET_LOCAL_DIR, DATASET_DIR),)
+    else:
+        candidates = (os.path.join(DATASET_LOCAL_DIR, DATASET_NAME, DATASET_NAME),
+                      os.path.join(DATASET_LOCAL_DIR, DATASET_NAME))
+    for folder in candidates:
         if glob.glob(os.path.join(folder, "*.parquet")):
             return folder
     return None
@@ -468,9 +505,11 @@ def ground_truth_depth(folder):
 def check_dataset(fail: bool):
     folder = dataset_folder()
     if not folder:
-        problem(f"no .parquet files for dataset '{DATASET_NAME}' under {DATASET_LOCAL_DIR} "
-                f"(expected {DATASET_LOCAL_DIR}/{DATASET_NAME}/{DATASET_NAME}); use --dataset if it is named "
-                f"differently", fail)
+        expected = (os.path.join(DATASET_LOCAL_DIR, DATASET_DIR) if CASE_TYPE
+                    else f"{DATASET_LOCAL_DIR}/{DATASET_NAME}/{DATASET_NAME}")
+        problem(f"no .parquet files for dataset '{DATASET_NAME}' (expected in {expected})"
+                + ("; set BUILTIN_CASES' dataset_dir" if CASE_TYPE else "; use --dataset if it is named differently"),
+                fail)
         return
     log(f"   dataset files: {folder}")
     if not os.path.exists(os.path.join(folder, "neighbors.parquet")):
@@ -488,8 +527,16 @@ def check_dataset(fail: bool):
         log(f"   ground truth: {depth} neighbors per query (enough for k={K})")
 
 
+def collection_precision(info):
+    """Precision of the collection's first dense vector field, from Endee's describe response."""
+    for field in (info or {}).get("fields", []):
+        if field.get("type") in ("vector", "multi_vector"):
+            return (field.get("params") or {}).get("precision")
+    return None
+
+
 def collection_status():
-    """(exists: True/False/None if unknown, total_elements, note) from Endee's API."""
+    """(exists: True/False/None if unknown, total_elements, note, precision) from Endee's API."""
     try:
         import requests
         from endee import endee
@@ -498,16 +545,18 @@ def collection_status():
         resp = requests.get(f"{nd.base_url}/collection/{COLLECTION_NAME}",
                             headers={"Authorization": nd.token}, timeout=60)
     except Exception as e:  # noqa: BLE001
-        return None, None, f"could not check ({e})"
+        return None, None, f"could not check ({e})", None
     if resp.status_code == 404:
-        return False, None, "not found"
+        return False, None, "not found", None
     if not resp.ok:
-        return None, None, f"HTTP {resp.status_code}"
-    return True, resp.json().get("total_elements"), "ok"
+        return None, None, f"HTTP {resp.status_code}", None
+    info = resp.json()
+    return True, info.get("total_elements"), "ok", collection_precision(info)
 
 
-def check_collection_for_search(fail: bool, force: bool):
-    exists, count, note = collection_status()
+def check_collection_for_search(fail: bool, force: bool, requested_precision=None):
+    global PRECISION
+    exists, count, note, precision = collection_status()
     if exists is False:
         problem(f"collection {COLLECTION_NAME} not found on {BASE_URL} (is ENDEE_TOKEN the benchmark's "
                 f"token?); run without --search-only to load it", fail)
@@ -522,10 +571,19 @@ def check_collection_for_search(fail: bool, force: bool):
             problem(msg + "; reload it, or add --force to search it anyway", fail)
     else:
         log(f"   collection {COLLECTION_NAME}: {count:,} vectors, as expected")
+    if exists and precision:
+        if requested_precision and requested_precision != precision:
+            problem(f"--precision {requested_precision}, but {COLLECTION_NAME} was built with {precision} "
+                    f"(precision is fixed when a collection is loaded); drop --precision or name the right "
+                    f"collection with --collection", fail)
+        else:
+            PRECISION = precision
+            log(f"   precision of {COLLECTION_NAME}: {precision} (recorded as the run's precision)")
 
 
 def check_disk_space():
-    need = DATASET_SIZE / 1e6 * DISK_GIB_PER_MILLION
+    need = (DATASET_SIZE / 1e6 * DISK_GIB_PER_MILLION * DATASET_DIM / 768
+            * BYTES_PER_VALUE.get(PRECISION, 2) / 2)
     try:
         out = run_on_server(f"df -B1 --output=avail {ENDEE_DATA_DIR} | tail -1\n")
         avail = int(out.strip().split()[-1]) / GIB
@@ -681,7 +739,8 @@ _XLSX_WARNED = False
 
 
 def summary_header_rows(load_duration, dir_h, dir_gib, collection_ram, ram_gib, ram_when):
-    """Top block of the Summary sheet. ram_gib: dict with res, private, shared, sys_used, sys_available (GiB)."""
+    """Top block of the Summary sheet. ram_gib: dict with res, private, shared, swap, private_plus_swap, sys_used,
+    sys_available, sys_swap_used (GiB); missing keys are left empty."""
     ram_gib = ram_gib or {}
     return [
         ("Load Duration:", load_duration,
@@ -693,8 +752,11 @@ def summary_header_rows(load_duration, dir_h, dir_gib, collection_ram, ram_gib, 
         ("Process RES (GiB):", ram_gib.get("res"), "htop RES of ndd-neon"),
         ("Process private (GiB):", ram_gib.get("private"), "RES - SHR"),
         ("Process shared / file-backed (GiB):", ram_gib.get("shared"), "htop SHR (MDBX pages)"),
+        ("Process swap (GiB):", ram_gib.get("swap"), "VmSwap: moved to swap, not counted in RES"),
+        ("Process private + swap (GiB):", ram_gib.get("private_plus_swap"), "memory that cannot be dropped"),
         ("Board used (GiB):", ram_gib.get("sys_used"), None),
         ("Board available (GiB):", ram_gib.get("sys_available"), None),
+        ("Board swap used (GiB):", ram_gib.get("sys_swap_used"), "free: swap used by all processes"),
         ("RAM measured:", ram_when, None),
     ]
 
@@ -773,7 +835,7 @@ def write_summary_xlsx(path, title, header_rows, results):
     detail_columns = ["Run Count", "Round", "After reboot", "Temp at start (C)", "Max temp during search (C)",
                       "Lowest big-core MHz", "Governor", "Concurrent p99 (s)", "Concurrent p95 (s)",
                       "Endee RES after (GiB)", "Endee private after (GiB)", "Endee shared/MDBX after (GiB)",
-                      "Board available after (GiB)"]
+                      "Board available after (GiB)", "Endee swap after (GiB)", "Board swap used after (GiB)"]
     for col, name in enumerate(detail_columns, start=1):
         c = ds.cell(1, col, name)
         c.font, c.fill = head_font, head_fill
@@ -781,7 +843,8 @@ def write_summary_xlsx(path, title, header_rows, results):
     for i, r in enumerate(results, start=2):
         values = [r["run_count"], r["round"], "yes" if r["round"] > 1 else "no", r["temp_start"], r["temp_max"],
                   r["min_big_mhz"], r["governor"], r["conc_p99"], r["conc_p95"], r["res_after"],
-                  r["private_after"], r["shared_after"], r["available_after"]]
+                  r["private_after"], r["shared_after"], r["available_after"], r.get("swap_after"),
+                  r.get("board_swap_after")]
         for col, value in enumerate(values, start=1):
             ds.cell(i, col, value).font = font
 
@@ -815,17 +878,24 @@ def build_command(load: bool, label: str) -> list:
         "--ef-search", str(EF_SEARCH),
         "--space-type", SPACE_TYPE,
         "--precision", PRECISION,
-        "--case-type", "PerformanceCustomDataset",
-        "--custom-case-name", CUSTOM_CASE_NAME,
-        "--custom-dataset-name", DATASET_NAME,
-        "--custom-dataset-dir", DATASET_NAME,
-        "--custom-dataset-size", str(DATASET_SIZE),
-        "--custom-dataset-dim", str(DATASET_DIM),
-        "--custom-dataset-metric-type", "COSINE",
-        "--custom-dataset-file-count", "1",
-        "--custom-dataset-with-gt",
-        "--custom-case-load-timeout", str(LOAD_TIMEOUT),
-        "--custom-case-optimize-timeout", str(OPTIMIZE_TIMEOUT),
+    ]
+    if CASE_TYPE:   # built-in VectorDBBench dataset (500K, 1M, 10M)
+        cmd += ["--case-type", CASE_TYPE]
+    else:
+        cmd += [
+            "--case-type", "PerformanceCustomDataset",
+            "--custom-case-name", CUSTOM_CASE_NAME,
+            "--custom-dataset-name", DATASET_NAME,
+            "--custom-dataset-dir", DATASET_NAME,
+            "--custom-dataset-size", str(DATASET_SIZE),
+            "--custom-dataset-dim", str(DATASET_DIM),
+            "--custom-dataset-metric-type", "COSINE",
+            "--custom-dataset-file-count", "1",
+            "--custom-dataset-with-gt",
+            "--custom-case-load-timeout", str(LOAD_TIMEOUT),
+            "--custom-case-optimize-timeout", str(OPTIMIZE_TIMEOUT),
+        ]
+    cmd += [
         "--k", str(K),
         "--num-concurrency", str(CONCURRENCY),
         "--concurrency-duration", str(CONCURRENCY_DURATION),
@@ -925,10 +995,14 @@ def parse_args(argv):
         description="Endee benchmark with RAM + temperature recording (see the top of this file).",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--size", default=DEFAULT_SIZE,
-                   help="collection size: 500K, 1M, 2M ... 7M -> <size>_index, custom_768d_<size> "
+                   help="collection size: 500K, 1M, 2M ... 8M, 10M -> <size>_index, custom_768d_<size> "
                         "(default %(default)s)")
     p.add_argument("--k", type=int, default=DEFAULT_K, help="top-k, e.g. 30 or 100 (default %(default)s)")
     p.add_argument("--ef-search", type=int, default=EF_SEARCH, help="ef_search (default %(default)s)")
+    p.add_argument("--precision", choices=PRECISIONS,
+                   help=f"vector precision for a load (default {PRECISION}); non-default precisions get their "
+                        "own collection name, e.g. 4M_int8_index. With --search-only the collection's own "
+                        "precision is used")
     p.add_argument("--search-only", action="store_true",
                    help="the collection is already loaded: skip the load and only search")
     p.add_argument("--searches", type=int, default=SEARCHES_PER_ROUND,
@@ -937,7 +1011,8 @@ def parse_args(argv):
                    help="after each round: docker compose down, reboot the server, docker compose up, then "
                         "another round of searches (default %(default)s)")
     p.add_argument("--collection", help="collection name (default <size>_index)")
-    p.add_argument("--dataset", help="dataset name (default custom_768d_<size>)")
+    p.add_argument("--dataset", help="custom dataset name (default custom_768d_<size>; 500K, 1M and 10M use "
+                                     "VectorDBBench's built-in datasets unless this is given)")
     p.add_argument("--label", help="task label (default <size>_k<k>[_search-only]_run<N>, N counting up "
                                    "from the previous runs with the same size, k and mode)")
     p.add_argument("--log", help="log file (default ~/benchmark_logs/<label>.log)")
@@ -967,14 +1042,24 @@ def next_run_number(prefix: str) -> int:
 
 def apply_settings(args):
     global COLLECTION_NAME, DATASET_NAME, CUSTOM_CASE_NAME, DATASET_SIZE, K, EF_SEARCH, TASK_LABEL
+    global CASE_TYPE, DATASET_DIM, DATASET_DIR, PRECISION
     m = re.fullmatch(r"(\d+)\s*([KkMm])", args.size.strip())
     if not m:
         sys.exit(f"--size must look like 500K, 1M, 4M or 7M (got {args.size!r})")
     number, unit = int(m.group(1)), m.group(2).upper()
     tag = f"{number}{unit}"
     DATASET_SIZE = number * (1_000 if unit == "K" else 1_000_000)
-    COLLECTION_NAME = args.collection or f"{tag}_index"
-    DATASET_NAME = args.dataset or f"custom_768d_{tag.lower()}"
+    if args.precision:
+        PRECISION = args.precision
+    precision_tag = "" if PRECISION == "int16" else f"_{PRECISION}"
+    COLLECTION_NAME = args.collection or f"{tag}{precision_tag}_index"
+    builtin = BUILTIN_CASES.get(tag) if not args.dataset else None   # --dataset forces a custom dataset
+    if builtin:
+        CASE_TYPE, DATASET_DIM, DATASET_DIR = builtin["case_type"], builtin["dim"], builtin["dataset_dir"]
+        DATASET_NAME = os.path.basename(DATASET_DIR)
+    else:
+        CASE_TYPE, DATASET_DIM, DATASET_DIR = None, CUSTOM_DIM, None
+        DATASET_NAME = args.dataset or f"custom_768d_{tag.lower()}"
     CUSTOM_CASE_NAME = f"Custom {DATASET_DIM}D {tag}"
     if args.k < 1 or args.searches < 1 or args.reboots < 0:
         sys.exit("--k and --searches must be at least 1, --reboots at least 0")
@@ -983,13 +1068,15 @@ def apply_settings(args):
     if args.label:
         TASK_LABEL = args.label
     else:
-        prefix = f"{tag}_k{K}" + ("_search-only" if args.search_only else "")
+        prefix = f"{tag}{precision_tag}_k{K}" + ("_search-only" if args.search_only else "")
         TASK_LABEL = f"{prefix}_run{next_run_number(prefix)}"
 
 
 def run_checks(args):
-    log(f"Checking setup for {COLLECTION_NAME} (dataset {DATASET_NAME}, {DATASET_SIZE:,} vectors, k={K}, "
-        f"ef_search={EF_SEARCH})")
+    log(f"Checking setup for {COLLECTION_NAME} (dataset {DATASET_NAME}, {DATASET_SIZE:,} x {DATASET_DIM}D, "
+        f"case {CASE_TYPE or 'PerformanceCustomDataset'}, k={K}, ef_search={EF_SEARCH})")
+    log("VectorDBBench command (token hidden): " + " ".join(
+        "<token>" if a == TOKEN else a for a in build_command(load=False, label=TASK_LABEL)))
     log("RAM:")
     try:
         log("   " + describe_ram(measure_ram()))
@@ -1003,10 +1090,13 @@ def run_checks(args):
     log("Dataset and ground truth:")
     check_dataset(fail=False)
     log("Collection:")
-    exists, count, note = collection_status()
+    exists, count, note, precision = collection_status()
     if exists:
-        log(f"   {COLLECTION_NAME}: {count:,} vectors (expected {DATASET_SIZE:,})"
+        log(f"   {COLLECTION_NAME}: {count:,} vectors (expected {DATASET_SIZE:,}), precision {precision}"
             + ("" if count == DATASET_SIZE else "  <- differs; --search-only would stop unless --force"))
+        if args.precision and precision and args.precision != precision:
+            log(f"   [PROBLEM] --precision {args.precision}, but the collection is {precision}: --search-only "
+                f"would stop; a load would drop and rebuild it as {args.precision}")
     else:
         log(f"   {COLLECTION_NAME}: {note}" + ("  (fine for a load run; needed for --search-only)"
                                                 if exists is False else ""))
@@ -1049,7 +1139,8 @@ def main():
     started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log("=" * 70)
     log(f"Run {TASK_LABEL}: {mode} | {COLLECTION_NAME} ({DATASET_SIZE:,} x {DATASET_DIM}D, dataset "
-        f"{DATASET_NAME}) | k={K} ef_search={EF_SEARCH} | {args.searches} searches x {rounds} round(s)"
+        f"{DATASET_NAME}, case {CASE_TYPE or 'PerformanceCustomDataset'}) | precision {PRECISION}"
+        f"{' (checked against the collection below)' if args.search_only else ''} | k={K} ef_search={EF_SEARCH} | {args.searches} searches x {rounds} round(s)"
         f"{f', server restart between rounds' if args.reboots else ''}")
     log(f"Server {BASE_URL} | CSV {OUTPUT_CSV} | log {log_path or '(terminal only)'}")
     if EF_SEARCH < K:
@@ -1061,7 +1152,7 @@ def main():
     if args.reboots:
         check_restart_setup(fail=True)
     if args.search_only:
-        check_collection_for_search(fail=True, force=args.force)
+        check_collection_for_search(fail=True, force=args.force, requested_precision=args.precision)
     else:
         log(f"   loading drops any existing {COLLECTION_NAME} first (--drop-old) and rebuilds it")
         check_disk_space()
@@ -1078,6 +1169,7 @@ def main():
         "mode": mode,
         "collection": COLLECTION_NAME,
         "dataset": DATASET_NAME,
+        "case_type": CASE_TYPE or "PerformanceCustomDataset",
         "size": DATASET_SIZE,
         "dim": DATASET_DIM,
         "m": M,
@@ -1105,7 +1197,8 @@ def main():
         ram = summary["ram"]
         header_rows = summary_header_rows(
             summary["load_duration"], summary["dir_h"], summary["dir_gib"], summary["collection_ram"],
-            {key: ram_value(ram, key) for key in ("res", "private", "shared", "sys_used", "sys_available")},
+            {key: ram_value(ram, key) for key in ("res", "private", "shared", "swap", "private_plus_swap",
+                                                  "sys_used", "sys_available", "sys_swap_used")},
             summary["ram_when"])
         title = (f"{COLLECTION_NAME} ({DATASET_SIZE:,} x {DATASET_DIM}D, {PRECISION}) | k={K}, ef_search={EF_SEARCH},"
                  f" M={M}, ef_con={EF_CON}, concurrency={CONCURRENCY} | {mode} | {TASK_LABEL} | {started}")
@@ -1165,7 +1258,7 @@ def main():
                 f"({ENDEE_COMPOSE_CMD} down, sudo reboot, {ENDEE_COMPOSE_CMD} up -d)")
             restart_seconds = restart_server()
             log(f"   restart took {restart_seconds}s")
-            exists, count, note = collection_status()
+            exists, count, note, _ = collection_status()
             log(f"   {COLLECTION_NAME} after restart: "
                 + (f"{count:,} vectors" if exists else note)
                 + " (the first search of this round loads it from disk)")
@@ -1260,6 +1353,8 @@ def main():
                 "private_after": ram_value(ram_after_search, "private"),
                 "shared_after": ram_value(ram_after_search, "shared"),
                 "available_after": ram_value(ram_after_search, "sys_available"),
+                "swap_after": ram_value(ram_after_search, "swap"),
+                "board_swap_after": ram_value(ram_after_search, "sys_swap_used"),
             })
             save_summary()  # saved now, so finished searches are kept even if a later step fails
             log(f"   {tag}: saved to {OUTPUT_CSV}")

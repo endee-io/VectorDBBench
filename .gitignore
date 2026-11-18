@@ -20,3 +20,9 @@ vectordb_bench/results/
 # AI rules
 CLAUDE.md
 AGENTS.md
+
+
+*.csv
+
+radxa_run_scripts/qdrant_benchmark_summaries/
+radxa_run_scripts/vespa_benchmark_summaries/

@@ -261,7 +261,7 @@ class QdrantLocal(VectorDB):
             limit=k,
             query_filter=self.query_filter,
             search_params=SearchParams(**self.search_parameter),
-            timeout=timeout,
+            timeout=timeout if timeout is not None else 60,
         ).points
 
         return [result.id for result in res]

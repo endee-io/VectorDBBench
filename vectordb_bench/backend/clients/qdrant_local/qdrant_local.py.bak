@@ -1,0 +1,267 @@
+"""Wrapper around the Qdrant over VectorDB"""
+
+import logging
+import time
+from collections.abc import Iterable
+from contextlib import contextmanager
+
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import (
+    Batch,
+    Datatype,
+    CollectionStatus,
+    FieldCondition,
+    Filter,
+    HnswConfigDiff,
+    MatchValue,
+    OptimizersConfigDiff,
+    PayloadSchemaType,
+    Range,
+    SearchParams,
+    VectorParams,
+)
+
+from vectordb_bench.backend.filter import Filter as BenchFilter
+from vectordb_bench.backend.filter import FilterOp
+
+from ..api import VectorDB
+from .config import QdrantLocalIndexConfig
+
+log = logging.getLogger(__name__)
+
+SECONDS_WAITING_FOR_INDEXING_API_CALL = 5
+QDRANT_BATCH_SIZE = 100
+
+
+def qdrant_collection_exists(client: QdrantClient, collection_name: str) -> bool:
+    collection_exists = True
+
+    try:
+        client.get_collection(collection_name)
+    except Exception:
+        collection_exists = False
+
+    return collection_exists
+
+
+class QdrantLocal(VectorDB):
+    supported_filter_types: list[FilterOp] = [
+        FilterOp.NonFilter,
+        FilterOp.NumGE,
+        FilterOp.StrEqual,
+    ]
+
+    def __init__(
+        self,
+        dim: int,
+        db_config: dict,
+        db_case_config: QdrantLocalIndexConfig,
+        collection_name: str = "QdrantLocalCollection",
+        drop_old: bool = False,
+        name: str = "QdrantLocal",
+        with_scalar_labels: bool = False,
+        **kwargs,
+    ):
+        """Initialize wrapper around the qdrant."""
+        self.name = name
+        db_config = dict(db_config)
+        collection_name = db_config.pop("collection_name", None) or collection_name  # --collection-name
+        self.db_config = db_config  # what is left is passed straight to QdrantClient(**db_config)
+        self.case_config = db_case_config
+        self.search_parameter = self.case_config.search_param()
+        self.collection_name = collection_name
+        self.client = None
+
+        self._primary_field = "pk"
+        self._vector_field = "vector"
+        self._scalar_label_field = "label"
+        self.with_scalar_labels = with_scalar_labels
+        self.query_filter = None
+
+        client = QdrantClient(**self.db_config)
+
+        # Lets just print the parameters here for double check
+        log.info(f"Case config: {self.case_config.index_param()}")
+        log.info(f"Search parameter: {self.search_parameter}")
+
+        if drop_old and qdrant_collection_exists(client, self.collection_name):
+            log.info(f"{self.name} client drop_old collection: {self.collection_name}")
+            client.delete_collection(self.collection_name)
+
+        if not qdrant_collection_exists(client, self.collection_name):
+            log.info(f"{self.name} create collection: {self.collection_name}")
+            self._create_collection(dim, client)
+
+        client = None
+
+    @contextmanager
+    def init(self):
+        """
+        Examples:
+            >>> with self.init():
+            >>>     self.insert_embeddings()
+            >>>     self.search_embedding()
+        """
+        # create connection
+        self.client = QdrantClient(**self.db_config)
+        yield
+        self.client = None
+        del self.client
+
+    def _create_collection(self, dim: int, qdrant_client: QdrantClient):
+        log.info(f"Create collection: {self.collection_name}")
+        log.info(
+            f"Index parameters: m={self.case_config.index_param()['m']}, "
+            f"ef_construct={self.case_config.index_param()['ef_construct']}, "
+            f"on_disk={self.case_config.index_param()['on_disk']}, "
+            f"quantization={self.case_config.quantization}, datatype={self.case_config.datatype}"
+        )
+
+        # If the on_disk is true, we enable both on disk index and vectors.
+        try:
+            qdrant_client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(
+                    size=dim,
+                    distance=self.case_config.index_param()["distance"],
+                    on_disk=self.case_config.index_param()["on_disk"],
+                    datatype=Datatype(self.case_config.datatype),
+                ),
+                quantization_config=self.case_config.quantization_config(),
+                # defer HNSW building until optimize(): indexing while loading creates many tiny segments
+                optimizers_config=OptimizersConfigDiff(indexing_threshold=0),
+                hnsw_config=HnswConfigDiff(
+                    m=self.case_config.index_param()["m"],
+                    ef_construct=self.case_config.index_param()["ef_construct"],
+                    on_disk=self.case_config.index_param()["on_disk"],
+                ),
+            )
+
+            qdrant_client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name=self._primary_field,
+                field_schema=PayloadSchemaType.INTEGER,
+            )
+            if self.with_scalar_labels:  # label-filter cases: keyword index so the filter is indexed, not scanned
+                qdrant_client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=self._scalar_label_field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+
+        except Exception as e:
+            if "already exists!" in str(e):
+                return
+            log.warning(f"Failed to create collection: {self.collection_name} error: {e}")
+            raise e from None
+
+    def optimize(self, data_size: int | None = None):
+        assert self.client, "Please call self.init() before"
+        # Indexing was deferred while loading; turn it on now and wait until it has actually run.
+        # (Status can read GREEN before the optimizer has even started, so also require that
+        # the indexed vector count has caught up with the stored point count.)
+        try:
+            self.client.update_collection(
+                collection_name=self.collection_name,
+                optimizer_config=OptimizersConfigDiff(indexing_threshold=100),
+            )
+            ready_polls = 0
+            while True:
+                time.sleep(SECONDS_WAITING_FOR_INDEXING_API_CALL)
+                info = self.client.get_collection(self.collection_name)
+                points = info.points_count or 0
+                indexed = info.indexed_vectors_count or 0
+                if info.status == CollectionStatus.GREEN and indexed >= 0.99 * points:
+                    ready_polls += 1
+                    if ready_polls >= 2:
+                        log.info(
+                            f"Finished building index for {self.collection_name}: stored={points}, "
+                            f"indexed={indexed}, status={info.status}"
+                        )
+                        return
+                else:
+                    ready_polls = 0
+
+        except Exception as e:
+            log.warning(f"QdrantLocal ready to search error: {e}")
+            raise e from None
+
+    def insert_embeddings(
+        self,
+        embeddings: Iterable[list[float]],
+        metadata: list[int],
+        labels_data: list[str] | None = None,
+        **kwargs,
+    ) -> tuple[int, Exception]:
+        """Insert embeddings into the database.
+
+        Args:
+            embeddings(list[list[float]]): list of embeddings
+            metadata(list[int]): list of metadata
+            kwargs: other arguments
+
+        Returns:
+            tuple[int, Exception]: number of embeddings inserted and exception if any
+        """
+        assert self.client is not None
+        assert len(embeddings) == len(metadata)
+        insert_count = 0
+
+        try:
+            for offset in range(0, len(embeddings), QDRANT_BATCH_SIZE):
+                vectors = embeddings[offset : offset + QDRANT_BATCH_SIZE]
+                ids = metadata[offset : offset + QDRANT_BATCH_SIZE]
+                payloads = [{self._primary_field: v} for v in ids]
+                if self.with_scalar_labels and labels_data is not None:
+                    for p, label in zip(payloads, labels_data[offset : offset + QDRANT_BATCH_SIZE], strict=True):
+                        p[self._scalar_label_field] = label
+                _ = self.client.upsert(
+                    collection_name=self.collection_name,
+                    wait=True,
+                    points=Batch(ids=ids, payloads=payloads, vectors=vectors),
+                )
+                insert_count += len(ids)
+        except Exception as e:
+            log.info(f"Failed to insert data, {e}")
+            return insert_count, e
+        else:
+            return insert_count, None
+
+    def prepare_filter(self, filters: BenchFilter):
+        """VectorDBBench filters: NumGE = id >= int_value (inclusive), StrEqual = label == label_value."""
+        if filters.type == FilterOp.NonFilter:
+            self.query_filter = None
+        elif filters.type == FilterOp.NumGE:
+            self.query_filter = Filter(
+                must=[FieldCondition(key=self._primary_field, range=Range(gte=filters.int_value))],
+            )
+        elif filters.type == FilterOp.StrEqual:
+            self.query_filter = Filter(
+                must=[FieldCondition(key=self._scalar_label_field, match=MatchValue(value=filters.label_value))],
+            )
+        else:
+            msg = f"Not support Filter for QdrantLocal - {filters}"
+            raise ValueError(msg)
+
+    def search_embedding(
+        self,
+        query: list[float],
+        k: int = 100,
+        timeout: int | None = None,
+        **kwargs,
+    ) -> list[int]:
+        """Perform a search on a query embedding and return results with score.
+        Should call self.init() first; the filter comes from prepare_filter().
+        """
+        assert self.client is not None
+
+        res = self.client.query_points(
+            collection_name=self.collection_name,
+            query=query,
+            limit=k,
+            query_filter=self.query_filter,
+            search_params=SearchParams(**self.search_parameter),
+            timeout=timeout,
+        ).points
+
+        return [result.id for result in res]
